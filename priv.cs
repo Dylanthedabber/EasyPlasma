@@ -380,7 +380,7 @@ if($r-eq 0){
         /* Add to user PATH */
         string curPath = Registry.CurrentUser.OpenSubKey(@"Environment")
             ?.GetValue("PATH", "") as string ?? "";
-        if (!curPath.Contains(InstallDir, StringComparison.OrdinalIgnoreCase)) {
+        if (curPath.ToLower().IndexOf(InstallDir.ToLower()) < 0) {
             Registry.CurrentUser.OpenSubKey(@"Environment", true)
                 ?.SetValue("PATH", curPath.TrimEnd(';') + ";" + InstallDir);
             Console.WriteLine("[+] Added to PATH: " + InstallDir);

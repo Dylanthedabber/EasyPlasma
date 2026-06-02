@@ -28,19 +28,16 @@ cd /d "%DST%"
 call build.bat 2>&1 | findstr /V "C4005" | findstr /V "previously declared"
 if errorlevel 1 exit /b 1
 
-:: Copy built outputs back to shared folder for Linux side
+:: Copy built outputs back to both shared folders
 echo.
-echo [*] Copying outputs to shared folder...
+echo [*] Copying outputs back...
 if not exist "%OUT%" mkdir "%OUT%"
-for %%f in (priv.exe syshost.exe priv.bat miniplasma.exe payload_exe.exe) do (
+for %%f in (priv.exe syshost.exe priv.bat miniplasma.exe payload_exe.exe GreenPlasma.exe ctf_alpc.exe) do (
     if exist "%DST%\%%f" (
-        copy /Y "%DST%\%%f" "%OUT%\%%f" >nul
-        echo [+] Copied %%f
+        copy /Y "%DST%\%%f" "%SRC%\%%f" >nul 2>&1 || echo [!] SRC copy skipped for %%f
+        copy /Y "%DST%\%%f" "%OUT%\%%f" >nul 2>&1
+        echo [+] %%f
     )
-)
-:: Also copy source files
-for %%f in (*.cpp *.c *.cs *.bat) do (
-    copy /Y "%DST%\%%f" "%OUT%\%%f" >nul 2>&1
 )
 
 :: Run priv.exe (interactive SYSTEM shell)
