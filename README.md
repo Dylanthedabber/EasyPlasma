@@ -25,12 +25,16 @@ This gives write access to system registry keys that normally require admin. Tha
 
 ---
 
-## One-line install (PowerShell)
+## One-line install
 
-Paste this into any PowerShell window. Downloads and installs automatically:
-
+**PowerShell:**
 ```powershell
 iex (irm https://raw.githubusercontent.com/Dylanthedabber/EasyPlasma/main/install.ps1)
+```
+
+**cmd:**
+```cmd
+powershell -NoProfile -ExecutionPolicy Bypass -Command "iex (irm https://raw.githubusercontent.com/Dylanthedabber/EasyPlasma/main/install.ps1)"
 ```
 
 Then open a new cmd and type `priv`.
