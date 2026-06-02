@@ -27,7 +27,7 @@ This gives write access to system registry keys that normally require admin. Tha
 
 ## Quick start (portable, no install)
 
-Download `priv.bat`, `priv.exe`, and `syshost.exe` into the same folder. Double-click `priv.bat` or run in cmd:
+Download `priv.bat` and `priv.exe` into the same folder. `syshost.exe` is downloaded automatically if not present. Double-click `priv.bat` or run in cmd:
 
 ```cmd
 priv.bat
@@ -41,9 +41,9 @@ That's it. It will escalate and drop you into a SYSTEM cmd in the same window. A
 
 Type `priv` from any cmd window after installing.
 
-**Step 1** Download `priv.exe` and `syshost.exe` into the same folder.
+**Step 1** Download `priv.exe` anywhere.
 
-**Step 2** Install (adds `priv` to your user PATH and sets a persistent alias):
+**Step 2** Install (downloads `syshost.exe` automatically, adds `priv` to your PATH, then removes the source files):
 
 ```cmd
 priv.exe install
