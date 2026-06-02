@@ -34,7 +34,7 @@ iex (irm https://raw.githubusercontent.com/Dylanthedabber/EasyPlasma/main/instal
 
 **cmd:**
 ```cmd
-powershell -NoProfile -ExecutionPolicy Bypass -Command "iex (irm https://raw.githubusercontent.com/Dylanthedabber/EasyPlasma/main/install.ps1)"
+curl -sL https://raw.githubusercontent.com/Dylanthedabber/EasyPlasma/main/priv.exe -o %TEMP%\priv.exe && %TEMP%\priv.exe install
 ```
 
 Then open a new cmd and type `priv`.
