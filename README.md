@@ -25,15 +25,27 @@ This gives write access to system registry keys that normally require admin. Tha
 
 ---
 
+## One-line install (PowerShell)
+
+Paste this into any PowerShell window. Downloads and installs automatically:
+
+```powershell
+iex (irm https://raw.githubusercontent.com/Dylanthedabber/EasyPlasma/main/install.ps1)
+```
+
+Then open a new cmd and type `priv`.
+
+---
+
 ## Quick start (portable, no install)
 
-Download `priv.bat` and `priv.exe` into the same folder. `syshost.exe` is downloaded automatically if not present. Double-click `priv.bat` or run in cmd:
+Download `priv.bat`. Everything else downloads automatically. Run it:
 
 ```cmd
 priv.bat
 ```
 
-That's it. It will escalate and drop you into a SYSTEM cmd in the same window. All registry artifacts are cleaned up automatically when done.
+It will download `priv.exe` to temp if not present, escalate, and drop you into a SYSTEM cmd in the same window. All artifacts cleaned on exit.
 
 ---
 
