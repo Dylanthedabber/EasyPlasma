@@ -1,5 +1,5 @@
 /*
- * syshost.c - SYSTEM shell host
+ * syshost.c  SYSTEM shell host
  * Runs as SYSTEM (dropped as fake wermgr.exe by priv.exe via MiniPlasma).
  * Reads config, attaches to the caller's console, spawns a SYSTEM cmd/PS shell,
  * signals priv.exe when ready, then waits for the shell to exit and signals done.
