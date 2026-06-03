@@ -9,7 +9,7 @@ if not "%~1"=="go" (
         echo [-] Source not found: %SRC%
         exit /b 1
     )
-    robocopy "%SRC%" "%DST%" easyplasma.cs build.bat go.bat /IS /Z /COPY:DAT /W:1 /R:1 /NFL /NDL /NJH /NJS
+    robocopy "%SRC%" "%DST%" easyplasma.cs stub.c build.bat go.bat /IS /Z /COPY:DAT /W:1 /R:1 /NFL /NDL /NJH /NJS
     copy /Y "%SRC%\go.bat" "%TEMP%\go_runner.bat" >nul
     call "%TEMP%\go_runner.bat" go
     exit /b
