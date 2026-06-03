@@ -5,25 +5,23 @@ set SRC=Z:\public share\phantomrpc-poc-main\phantomrpc-poc-main\POCs\GreenPlasma
 set DST=C:\Users\unpriv\Music
 set OUT=Z:\public share\EasyPlasma
 
-:: If not restarted yet, sync then re-launch fresh copy of this bat
+:: If not restarted yet, sync then re-launch from TEMP (CMD locks the running bat)
 if not "%~1"=="go" (
-    :: Kill any running instances
     taskkill /F /IM GreenPlasma.exe /T >nul 2>&1
     taskkill /F /IM ctf_alpc.exe    /T >nul 2>&1
     timeout /T 2 /NOBREAK >nul
 
-    :: Verify source
     if not exist "%SRC%\GreenPlasma.cpp" (
         echo [-] Source not found: %SRC%
         exit /b 1
     )
 
-    :: Sync all source files including go.bat itself
-    robocopy "%SRC%" "%DST%" *.cpp *.c *.cs *.bat /IS /Z /COPY:DAT /W:2 /R:5 /NFL /NDL /NJH /NJS
-    if errorlevel 8 ( echo [-] Sync failed & exit /b 1 )
+    :: Sync source files (skip *.bat - CMD locks go.bat while running)
+    robocopy "%SRC%" "%DST%" *.cpp *.c *.cs /IS /Z /COPY:DAT /W:2 /R:5 /NFL /NDL /NJH /NJS
 
-    :: Re-launch fresh copy so CMD picks up updated go.bat
-    call "%DST%\go.bat" go
+    :: Copy latest go.bat to TEMP and restart from there (no lock issue)
+    copy /Y "%SRC%\go.bat" "%TEMP%\go_runner.bat" >nul
+    call "%TEMP%\go_runner.bat" go
     exit /b
 )
 
