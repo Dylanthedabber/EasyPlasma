@@ -16,10 +16,11 @@ if not "%~1"=="go" (
         exit /b 1
     )
 
-    :: Sync source files (skip *.bat - CMD locks go.bat while running)
-    robocopy "%SRC%" "%DST%" *.cpp *.c *.cs /IS /Z /COPY:DAT /W:2 /R:5 /NFL /NDL /NJH /NJS
+    :: Sync all source files including *.bat
+    :: Robocopy skips locked go.bat automatically but updates build.bat + others
+    robocopy "%SRC%" "%DST%" *.cpp *.c *.cs *.bat /IS /Z /COPY:DAT /W:1 /R:1 /NFL /NDL /NJH /NJS
 
-    :: Copy latest go.bat to TEMP and restart from there (no lock issue)
+    :: Copy latest go.bat to TEMP and restart from there (avoids CMD file lock)
     copy /Y "%SRC%\go.bat" "%TEMP%\go_runner.bat" >nul
     call "%TEMP%\go_runner.bat" go
     exit /b
