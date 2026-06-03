@@ -45,9 +45,14 @@ __declspec(dllexport) HRESULT __stdcall DllGetClassObject(
     return 0x80004002; /* E_NOINTERFACE - we don't implement the profiler interface */
 }
 
+static HMODULE gSelf = NULL;
+
 BOOL WINAPI DllMain(HINSTANCE hInst, DWORD reason, LPVOID reserved) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(hInst);
+        /* Hold extra ref so the host can't FreeLibrary us before pipe connects */
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                           (LPCWSTR)hInst, &gSelf);
         HANDLE h = CreateThread(NULL, 0, PipeThread, NULL, 0, NULL);
         if (h) CloseHandle(h);
     }
