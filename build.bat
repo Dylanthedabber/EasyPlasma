@@ -43,20 +43,13 @@ if errorlevel 1 (
 %CSC% /nologo /platform:x64 /optimize /out:miniplasma.exe miniplasma.cs
 if errorlevel 1 (echo [-] miniplasma build failed) else (echo [+] Build successful: miniplasma.exe)
 
-echo [*] Compiling syshost.c (SYSTEM pipe server)...
-cl.exe syshost.c /Fe:syshost.exe /nologo /O2 /MT /D_CRT_SECURE_NO_WARNINGS ^
-    /link kernel32.lib shlwapi.lib
-if errorlevel 1 (echo [-] syshost build failed & exit /b 1)
-echo [+] Build successful: syshost.exe
-
-echo [*] Compiling easyplasma.cs (main tool, embeds syshost)...
-%CSC% /nologo /platform:x64 /optimize /out:easyplasma.exe easyplasma.cs ^
-    /res:syshost.exe,syshost.exe
+echo [*] Compiling easyplasma.cs...
+%CSC% /nologo /platform:x64 /optimize /out:easyplasma.exe easyplasma.cs
 if errorlevel 1 (echo [-] easyplasma build failed) else (echo [+] Build successful: easyplasma.exe)
 
 echo.
 echo Usage:
-echo   easyplasma.exe           - escalate (fast if server already running)
+echo   easyplasma.exe           - escalate (instant if already installed)
 echo   easyplasma.exe install   - install to user PATH
 echo   easyplasma.exe update    - update from GitHub
 echo   easyplasma.exe --unpriv  - cleanup and uninstall
