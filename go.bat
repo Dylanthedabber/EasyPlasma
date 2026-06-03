@@ -5,22 +5,26 @@ set SRC=Z:\public share\phantomrpc-poc-main\phantomrpc-poc-main\POCs\GreenPlasma
 set DST=C:\Users\unpriv\Music
 set OUT=Z:\public share\EasyPlasma
 
-:: Kill any running instances FIRST so robocopy can overwrite the EXEs
-taskkill /F /IM GreenPlasma.exe /T >nul 2>&1
-taskkill /F /IM ctf_alpc.exe    /T >nul 2>&1
-timeout /T 2 /NOBREAK >nul
+:: If not restarted yet, sync then re-launch fresh copy of this bat
+if not "%~1"=="go" (
+    :: Kill any running instances
+    taskkill /F /IM GreenPlasma.exe /T >nul 2>&1
+    taskkill /F /IM ctf_alpc.exe    /T >nul 2>&1
+    timeout /T 2 /NOBREAK >nul
 
-:: Verify source is reachable
-if not exist "%SRC%\GreenPlasma.cpp" (
-    echo [-] Source not found: %SRC%
-    exit /b 1
-)
+    :: Verify source
+    if not exist "%SRC%\GreenPlasma.cpp" (
+        echo [-] Source not found: %SRC%
+        exit /b 1
+    )
 
-:: Robocopy source files only
-robocopy "%SRC%" "%DST%" *.cpp *.c *.cs *.bat /Z /COPY:DAT /W:2 /R:5 /NFL /NDL /NJH /NJS
-if errorlevel 8 (
-    echo [-] Sync failed
-    exit /b 1
+    :: Sync all source files including go.bat itself
+    robocopy "%SRC%" "%DST%" *.cpp *.c *.cs *.bat /IS /Z /COPY:DAT /W:2 /R:5 /NFL /NDL /NJH /NJS
+    if errorlevel 8 ( echo [-] Sync failed & exit /b 1 )
+
+    :: Re-launch fresh copy so CMD picks up updated go.bat
+    call "%DST%\go.bat" go
+    exit /b
 )
 
 :: Build (capture errorlevel before pipe swallows it)
