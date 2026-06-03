@@ -13,7 +13,7 @@ exit /b
 
 :run
 :: Step 2: sync source, build, run
-robocopy "%SRC%" "%BUILD%" easyplasma.cs stub.c build.bat /IS /Z /COPY:DAT /W:1 /R:1 /NFL /NDL /NJH /NJS
+robocopy "%SRC%" "%BUILD%" easyplasma.cs stub.c stub_dll.c build.bat /IS /Z /COPY:DAT /W:1 /R:1 /NFL /NDL /NJH /NJS
 cd /d "%BUILD%"
 call build.bat
 if errorlevel 1 exit /b 1
