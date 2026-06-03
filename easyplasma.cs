@@ -295,6 +295,7 @@ if($r-eq 0){
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
     [DllImport("kernel32.dll")] static extern uint WaitForSingleObject(IntPtr h, uint ms);
     [DllImport("kernel32.dll")] static extern int GetCurrentProcessId();
+    [DllImport("kernel32.dll")] static extern uint WTSGetActiveConsoleSessionId();
 
     [DllImport("advapi32.dll")] static extern bool ImpersonateNamedPipeClient(IntPtr pipe);
     [DllImport("advapi32.dll")] static extern bool OpenThreadToken(
@@ -307,11 +308,6 @@ if($r-eq 0){
         IntPtr token, string app, string cmd, IntPtr pa, IntPtr ta,
         bool inherit, uint flags, IntPtr env, string dir,
         ref STARTUPINFO si, out PROCESS_INFORMATION pi);
-
-    [DllImport("kernel32.dll")] static extern IntPtr GetCurrentThread();
-    [DllImport("wtsapi32.dll")] static extern bool WTSQuerySessionInformation(
-        IntPtr server, uint session, uint cls, out IntPtr buf, out uint bytes);
-    [DllImport("kernel32.dll")] static extern uint WTSGetActiveConsoleSessionId();
 
     [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
     struct STARTUPINFO {
@@ -478,7 +474,7 @@ if($r-eq 0){
 
             /* Duplicate our own SYSTEM token and set the target session */
             IntPtr selfToken;
-            OpenProcessToken(GetCurrentProcessHandle(), 0xF01FF, out selfToken);
+            OpenProcessToken(GetCurrentProcess(), 0xF01FF, out selfToken);
             IntPtr primary;
             DuplicateTokenEx(selfToken, 0x10000000, IntPtr.Zero, 2, 1, out primary);
             CloseHandle(selfToken);
@@ -511,7 +507,7 @@ if($r-eq 0){
         finally { try { srv.Dispose(); } catch {} }
     }
 
-    [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcessHandle();
+    [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
     [DllImport("advapi32.dll")] static extern bool OpenProcessToken(IntPtr h, uint a, out IntPtr t);
 
     /* ── Install / Update / Uninstall ────────────────────────────────────── */
