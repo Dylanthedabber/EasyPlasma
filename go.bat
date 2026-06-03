@@ -23,10 +23,16 @@ if errorlevel 8 (
     exit /b 1
 )
 
-:: Build
+:: Build (capture errorlevel before pipe swallows it)
 cd /d "%DST%"
-call build.bat 2>&1 | findstr /V "C4005" | findstr /V "previously declared"
-if errorlevel 1 exit /b 1
+call build.bat > "%TEMP%\build_out.tmp" 2>&1
+set BUILD_ERR=%errorlevel%
+type "%TEMP%\build_out.tmp" | findstr /V "C4005" | findstr /V "previously declared"
+del "%TEMP%\build_out.tmp" >nul 2>&1
+if %BUILD_ERR% neq 0 (
+    echo [-] Build failed
+    exit /b 1
+)
 
 :: Copy built outputs back to both shared folders
 echo.
