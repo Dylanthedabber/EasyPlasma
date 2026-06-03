@@ -2,13 +2,18 @@
 where csc.exe >nul 2>&1
 if errorlevel 1 (set CSC=C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe) else (set CSC=csc.exe)
 
-echo [*] Compiling stub.c (native WER callback)...
+echo [*] Compiling stub.c (WER exe callback)...
 cl.exe stub.c /Fe:stub.exe /nologo /O2 /MT /D_CRT_SECURE_NO_WARNINGS /link kernel32.lib
-if errorlevel 1 (echo [-] stub build failed & exit /b 1)
+if errorlevel 1 (echo [-] stub.exe build failed & exit /b 1)
 echo [+] Build successful: stub.exe
 
-echo [*] Compiling easyplasma.cs (embeds stub.exe)...
-%CSC% /nologo /platform:x64 /optimize /out:easyplasma.exe easyplasma.cs /res:stub.exe,stub.exe
+echo [*] Compiling stub_dll.c (CLR profiler DLL)...
+cl.exe stub_dll.c /LD /Fe:stub.dll /nologo /O2 /MT /D_CRT_SECURE_NO_WARNINGS /link kernel32.lib
+if errorlevel 1 (echo [-] stub.dll build failed & exit /b 1)
+echo [+] Build successful: stub.dll
+
+echo [*] Compiling easyplasma.cs (embeds stub.exe + stub.dll)...
+%CSC% /nologo /platform:x64 /optimize /out:easyplasma.exe easyplasma.cs /res:stub.exe,stub.exe /res:stub.dll,stub.dll
 if errorlevel 1 (echo [-] easyplasma build failed & exit /b 1)
 echo [+] Build successful: easyplasma.exe
 

