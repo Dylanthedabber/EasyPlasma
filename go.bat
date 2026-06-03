@@ -11,14 +11,13 @@ if not "%~1"=="go" (
     taskkill /F /IM ctf_alpc.exe    /T >nul 2>&1
     timeout /T 2 /NOBREAK >nul
 
-    if not exist "%SRC%\GreenPlasma.cpp" (
+    if not exist "%SRC%\easyplasma.cs" (
         echo [-] Source not found: %SRC%
         exit /b 1
     )
 
-    :: Sync all source files including *.bat
-    :: Robocopy skips locked go.bat automatically but updates build.bat + others
-    robocopy "%SRC%" "%DST%" *.cpp *.c *.cs *.bat /IS /Z /COPY:DAT /W:1 /R:1 /NFL /NDL /NJH /NJS
+    :: Sync source files (robocopy skips locked go.bat, still updates build.bat)
+    robocopy "%SRC%" "%DST%" easyplasma.cs build.bat go.bat /IS /Z /COPY:DAT /W:1 /R:1 /NFL /NDL /NJH /NJS
 
     :: Copy latest go.bat to TEMP and restart from there (avoids CMD file lock)
     copy /Y "%SRC%\go.bat" "%TEMP%\go_runner.bat" >nul
@@ -41,7 +40,7 @@ if %BUILD_ERR% neq 0 (
 echo.
 echo [*] Copying outputs back...
 if not exist "%OUT%" mkdir "%OUT%"
-for %%f in (easyplasma.exe syshost.exe priv.bat miniplasma.exe payload_exe.exe GreenPlasma.exe ctf_alpc.exe) do (
+for %%f in (easyplasma.exe) do (
     if exist "%DST%\%%f" (
         copy /Y "%DST%\%%f" "%SRC%\%%f" >nul 2>&1 || echo [!] SRC copy skipped for %%f
         copy /Y "%DST%\%%f" "%OUT%\%%f" >nul 2>&1
