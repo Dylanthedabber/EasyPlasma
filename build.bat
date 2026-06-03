@@ -43,18 +43,20 @@ if errorlevel 1 (
 %CSC% /nologo /platform:x64 /optimize /out:miniplasma.exe miniplasma.cs
 if errorlevel 1 (echo [-] miniplasma build failed) else (echo [+] Build successful: miniplasma.exe)
 
-echo [*] Compiling syshost.c (SYSTEM shell host)...
+echo [*] Compiling syshost.c (SYSTEM pipe server)...
 cl.exe syshost.c /Fe:syshost.exe /nologo /O2 /MT /D_CRT_SECURE_NO_WARNINGS ^
-    /link kernel32.lib
-if errorlevel 1 (echo [-] syshost build failed) else (echo [+] Build successful: syshost.exe)
+    /link kernel32.lib shlwapi.lib
+if errorlevel 1 (echo [-] syshost build failed & exit /b 1)
+echo [+] Build successful: syshost.exe
 
-echo [*] Compiling priv.cs (interactive SYSTEM shell tool)...
-%CSC% /nologo /platform:x64 /optimize /out:priv.exe priv.cs
-if errorlevel 1 (echo [-] priv build failed) else (echo [+] Build successful: priv.exe)
+echo [*] Compiling easyplasma.cs (main tool, embeds syshost)...
+%CSC% /nologo /platform:x64 /optimize /out:easyplasma.exe easyplasma.cs ^
+    /res:syshost.exe,syshost.exe
+if errorlevel 1 (echo [-] easyplasma build failed) else (echo [+] Build successful: easyplasma.exe)
 
 echo.
 echo Usage:
-echo   priv.exe           - escalate + open SYSTEM shell in this terminal
-echo   priv.exe install   - install to user PATH (persistent)
-echo   priv.exe --unpriv  - cleanup all artifacts + uninstall
-echo   priv.bat           - portable version (no install, auto-cleanup)
+echo   easyplasma.exe           - escalate (fast if server already running)
+echo   easyplasma.exe install   - install to user PATH
+echo   easyplasma.exe update    - update from GitHub
+echo   easyplasma.exe --unpriv  - cleanup and uninstall
