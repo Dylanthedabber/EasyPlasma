@@ -7,7 +7,8 @@ set BUILD=C:\Users\unpriv\Music
 if "%~1"=="run" goto run
 
 :: Step 1: resync go.bat from share, then re-run fresh copy
-copy /Y "%SRC%\go.bat" "%TEMP%\go.bat" >nul
+copy /Y "%SRC%\go.bat" "%TEMP%\go.bat"
+if errorlevel 1 (echo [-] Cannot reach share & exit /b 1)
 call "%TEMP%\go.bat" run
 exit /b
 
